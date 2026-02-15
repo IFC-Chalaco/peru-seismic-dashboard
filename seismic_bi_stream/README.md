@@ -26,6 +26,31 @@ Data source:
 
 If IGP adds a new field, it is captured in raw JSON immediately and appears as a new `src_<fieldname>` column in the CSV on subsequent exports.
 
+## Desktop Procedure (Cloud-Automated)
+
+1. Create a GitHub repository and push the project files.
+2. Confirm `origin` points to your GitHub repo and push `main`.
+3. Enable GitHub Actions write access:
+   - `Settings` -> `Actions` -> `General` -> `Workflow permissions` -> `Read and write permissions`.
+4. Run `Refresh IGP Seismic Feed` once manually from the `Actions` tab.
+5. Verify published outputs:
+   - `seismic_bi_stream/exports/earthquakes_live.csv`
+   - `seismic_bi_stream/exports/earthquakes_live.geojson`
+6. Connect Power BI/Tableau to the public raw CSV URL in GitHub.
+7. Enable scheduled refresh in Power BI Service.
+8. Use `IGP Seismic Feed Stale Alert` to monitor heartbeat drift and open/close alert issues automatically.
+
+Operational note:
+- With GitHub Actions enabled, your computer does not need to be on for data updates.
+- Keep local `--loop` mode only for development or ad hoc testing.
+
+## Data Flow and API Clarification
+
+- Source API: IGP ArcGIS REST service (`SismosReportados` layer).
+- This project is a data ingestion and publishing pipeline, not a custom REST API service.
+- Output interface: versioned GitHub files (CSV and GeoJSON) consumed by BI tools.
+- Correct terminology for portfolio: `data ingestion pipeline`, `automated data feed`, `workflow orchestration`, and `schema-change monitoring`.
+
 ## Run once
 
 ```bash
