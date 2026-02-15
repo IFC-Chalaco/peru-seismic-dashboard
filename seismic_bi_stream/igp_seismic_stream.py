@@ -25,6 +25,7 @@ ARC_LAYER_URL = (
 QUERY_URL = f"{ARC_LAYER_URL}/query"
 METADATA_URL = f"{ARC_LAYER_URL}?f=pjson"
 LOCAL_TZ = ZoneInfo("America/Lima")
+ET_TZ = ZoneInfo("America/New_York")
 
 
 @dataclass
@@ -41,14 +42,17 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def to_iso_utc_from_ms(epoch_ms: int | float | None) -> str | None:
-    if epoch_ms is None:
-        return None
+def iso_utc_to_zone_fields(
+    iso_utc: str | None, tz: ZoneInfo
+) -> tuple[str | None, str | None, str | None]:
+    if not iso_utc:
+        return None, None, None
     try:
-        dt = datetime.fromtimestamp(float(epoch_ms) / 1000.0, tz=timezone.utc)
-    except (TypeError, ValueError, OSError):
-        return None
-    return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        utc_dt = datetime.fromisoformat(iso_utc.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None, None, None
+    local_dt = utc_dt.astimezone(tz).replace(microsecond=0)
+    return local_dt.isoformat(), local_dt.date().isoformat(), local_dt.strftime("%H:%M:%S")
 
 
 def http_get_json(
@@ -427,10 +431,36 @@ def export_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
         if isinstance(payload, dict):
             payload_keys.update(str(k) for k in payload.keys())
 
+    db_cols = [
+        "objectid",
+        "code",
+        "event_ts_utc",
+        "event_ts_local",
+        "event_date_local",
+        "event_time_local",
+        "lat",
+        "lon",
+        "magnitud",
+        "prof",
+        "profundidad",
+        "intensidad",
+        "departamento",
+        "referencia",
+        "ultimo",
+        "reporte",
+        "hora",
+        "fecha_ms",
+        "fechaevento_ms",
+        "mag",
+        "ingested_at_utc",
+    ]
     static_cols = [
         "objectid",
         "code",
         "event_ts_utc",
+        "event_ts_et",
+        "event_date_et",
+        "event_time_et",
         "event_ts_local",
         "event_date_local",
         "event_time_local",
@@ -458,7 +488,13 @@ def export_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
-            out: dict[str, Any] = {col: row[col] for col in static_cols}
+            out: dict[str, Any] = {col: row[col] for col in db_cols}
+            event_ts_et, event_date_et, event_time_et = iso_utc_to_zone_fields(
+                row["event_ts_utc"], ET_TZ
+            )
+            out["event_ts_et"] = event_ts_et
+            out["event_date_et"] = event_date_et
+            out["event_time_et"] = event_time_et
             try:
                 payload = json.loads(row["raw_attributes_json"] or "{}")
             except json.JSONDecodeError:
@@ -491,6 +527,12 @@ def export_geojson(conn: sqlite3.Connection, geojson_path: Path) -> None:
             properties = {}
         properties["event_ts_utc"] = row["event_ts_utc"]
         properties["event_ts_local"] = row["event_ts_local"]
+        event_ts_et, event_date_et, event_time_et = iso_utc_to_zone_fields(
+            row["event_ts_utc"], ET_TZ
+        )
+        properties["event_ts_et"] = event_ts_et
+        properties["event_date_et"] = event_date_et
+        properties["event_time_et"] = event_time_et
 
         lat = row["lat"]
         lon = row["lon"]
@@ -562,6 +604,8 @@ def run_once(
             state["last_objectid"] = latest_seen
         state["known_fields"] = known_fields
         state["last_run_utc"] = utc_now_iso()
+        last_run_et, _, _ = iso_utc_to_zone_fields(state["last_run_utc"], ET_TZ)
+        state["last_run_et"] = last_run_et
         save_state(state_path, state)
 
         csv_path = output_dir / "earthquakes_live.csv"
@@ -653,6 +697,8 @@ def main() -> int:
                 timeout_seconds=args.timeout_seconds,
                 insecure_skip_verify=args.insecure_skip_verify,
             )
+            now_utc = utc_now_iso()
+            now_et, _, _ = iso_utc_to_zone_fields(now_utc, ET_TZ)
             print(
                 json.dumps(
                     {
@@ -663,17 +709,21 @@ def main() -> int:
                         "new_fields": summary.new_fields,
                         "csv": str(summary.csv_path),
                         "geojson": str(summary.geojson_path),
-                        "run_at_utc": utc_now_iso(),
+                        "run_at_utc": now_utc,
+                        "run_at_et": now_et,
                     }
                 )
             )
         except Exception as exc:
+            now_utc = utc_now_iso()
+            now_et, _, _ = iso_utc_to_zone_fields(now_utc, ET_TZ)
             print(
                 json.dumps(
                     {
                         "status": "error",
                         "error": str(exc),
-                        "run_at_utc": utc_now_iso(),
+                        "run_at_utc": now_utc,
+                        "run_at_et": now_et,
                     }
                 ),
                 file=sys.stderr,

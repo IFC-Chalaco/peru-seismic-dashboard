@@ -18,6 +18,11 @@ Data source:
 - Rebuilds:
   - `earthquakes_live.csv` (flat table for Tableau/Power BI)
   - `earthquakes_live.geojson` (map feed)
+- Includes timestamp fields for both UTC and US Eastern Time in the CSV:
+  - `event_ts_utc`
+  - `event_ts_et`
+  - `event_date_et`
+  - `event_time_et`
 
 If IGP adds a new field, it is captured in raw JSON immediately and appears as a new `src_<fieldname>` column in the CSV on subsequent exports.
 

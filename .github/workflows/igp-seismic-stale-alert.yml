@@ -34,6 +34,17 @@ jobs:
             const alertLabel = process.env.ALERT_LABEL;
             const owner = context.repo.owner;
             const repo = context.repo.repo;
+            const fmtEt = (date) =>
+              new Intl.DateTimeFormat("en-US", {
+                timeZone: "America/New_York",
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false
+              }).format(date);
 
             if (!fs.existsSync(path)) {
               core.setFailed(`Missing heartbeat file: ${path}`);
@@ -62,6 +73,8 @@ jobs:
 
             const now = new Date();
             const ageMinutes = (now.getTime() - lastRun.getTime()) / 60000;
+            const lastRunEt = state.last_run_et || fmtEt(lastRun);
+            const checkedEt = fmtEt(now);
 
             // Ensure monitoring label exists.
             try {
@@ -93,7 +106,9 @@ jobs:
                 `- Threshold: ${staleMinutes} minutes`,
                 `- Current age: ${ageMinutes.toFixed(1)} minutes`,
                 `- last_run_utc: ${lastRunUtc}`,
+                `- last_run_et: ${lastRunEt}`,
                 `- checked_at_utc: ${now.toISOString()}`,
+                `- checked_at_et: ${checkedEt}`,
                 "",
                 "Investigate workflow: `Refresh IGP Seismic Feed`."
               ].join("\n");
@@ -120,7 +135,9 @@ jobs:
                   "",
                   `- Current age: ${ageMinutes.toFixed(1)} minutes`,
                   `- last_run_utc: ${lastRunUtc}`,
-                  `- checked_at_utc: ${now.toISOString()}`
+                  `- last_run_et: ${lastRunEt}`,
+                  `- checked_at_utc: ${now.toISOString()}`,
+                  `- checked_at_et: ${checkedEt}`
                 ].join("\n")
               });
               await github.rest.issues.update({
@@ -137,7 +154,9 @@ jobs:
             core.summary
               .addHeading("Seismic Feed Heartbeat Check")
               .addRaw(`last_run_utc: ${lastRunUtc}\n`, true)
+              .addRaw(`last_run_et: ${lastRunEt}\n`, true)
               .addRaw(`checked_at_utc: ${now.toISOString()}\n`, true)
+              .addRaw(`checked_at_et: ${checkedEt}\n`, true)
               .addRaw(`age_minutes: ${ageMinutes.toFixed(1)}\n`, true)
               .addRaw(`threshold_minutes: ${staleMinutes}\n`, true)
               .write();
