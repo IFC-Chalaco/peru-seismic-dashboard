@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       STATE_PATH: seismic_bi_stream/data/state.json
-      STALE_MINUTES: "15"
+      STALE_MINUTES: "30"
       ALERT_TITLE: "[Alert] IGP seismic feed heartbeat stale"
       ALERT_LABEL: "seismic-monitoring"
 
@@ -29,7 +29,7 @@ jobs:
             const fs = require("fs");
 
             const path = process.env.STATE_PATH;
-            const staleMinutes = Number.parseInt(process.env.STALE_MINUTES || "15", 10);
+            const staleMinutes = Number.parseInt(process.env.STALE_MINUTES || "30", 10);
             const alertTitle = process.env.ALERT_TITLE;
             const alertLabel = process.env.ALERT_LABEL;
             const owner = context.repo.owner;

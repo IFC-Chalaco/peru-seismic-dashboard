@@ -85,7 +85,7 @@ The workflow commits only `exports/` and `state.json` (not SQLite). The ingestor
 
 `igp-seismic-stale-alert.yml` checks `seismic_bi_stream/data/state.json` every 10 minutes.
 
-- If `last_run_utc` is older than 15 minutes, it opens a GitHub issue:
+- If `last_run_utc` is older than 30 minutes, it opens a GitHub issue:
   - `[Alert] IGP seismic feed heartbeat stale`
 - If the feed recovers, it comments and closes that alert issue automatically.
 
