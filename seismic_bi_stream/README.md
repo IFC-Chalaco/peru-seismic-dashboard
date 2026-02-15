@@ -1,4 +1,4 @@
-# IGP Seismic Stream for Tableau/Power BI
+h# IGP Seismic Stream for Tableau/Power BI
 
 This pipeline ingests public seismic events from the official IGP ArcGIS service and exports BI-ready files that can refresh continuously.
 
@@ -26,7 +26,7 @@ Data source:
 
 If IGP adds a new field, it is captured in raw JSON immediately and appears as a new `src_<fieldname>` column in the CSV on subsequent exports.
 
-## Desktop Procedure (Cloud-Automated)
+## Steps taken
 
 1. Create a GitHub repository and push the project files.
 2. Confirm `origin` points to your GitHub repo and push `main`.
