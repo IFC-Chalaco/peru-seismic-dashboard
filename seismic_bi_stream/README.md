@@ -2,7 +2,7 @@
 
 This pipeline ingests public seismic events from the official IGP ArcGIS service and exports BI-ready files that can refresh continuously.
 
-## GitHub Description (copy/paste)
+## GitHub Description
 
 `Live Peru seismic data pipeline from official IGP ArcGIS feed to Power BI/Tableau (CSV + GeoJSON), with incremental updates and automatic schema-change detection.`
 
