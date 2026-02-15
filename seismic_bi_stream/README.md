@@ -72,5 +72,17 @@ If this repository is pushed to GitHub, add a scheduled workflow that runs the s
 
 This project already includes:
 - `.github/workflows/igp-seismic-refresh.yml`
+- `.github/workflows/igp-seismic-stale-alert.yml`
 
 The workflow commits only `exports/` and `state.json` (not SQLite). The ingestor automatically backfills if DB history is missing, so cloud runs still produce a full snapshot.
+
+### Stale-feed alert
+
+`igp-seismic-stale-alert.yml` checks `seismic_bi_stream/data/state.json` every 10 minutes.
+
+- If `last_run_utc` is older than 15 minutes, it opens a GitHub issue:
+  - `[Alert] IGP seismic feed heartbeat stale`
+- If the feed recovers, it comments and closes that alert issue automatically.
+
+To change the alert threshold, edit:
+- `STALE_MINUTES` in `.github/workflows/igp-seismic-stale-alert.yml`

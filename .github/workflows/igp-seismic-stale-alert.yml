@@ -1,0 +1,143 @@
+name: IGP Seismic Feed Stale Alert
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  stale-check:
+    runs-on: ubuntu-latest
+    env:
+      STATE_PATH: seismic_bi_stream/data/state.json
+      STALE_MINUTES: "15"
+      ALERT_TITLE: "[Alert] IGP seismic feed heartbeat stale"
+      ALERT_LABEL: "seismic-monitoring"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check heartbeat and manage alert issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+
+            const path = process.env.STATE_PATH;
+            const staleMinutes = Number.parseInt(process.env.STALE_MINUTES || "15", 10);
+            const alertTitle = process.env.ALERT_TITLE;
+            const alertLabel = process.env.ALERT_LABEL;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            if (!fs.existsSync(path)) {
+              core.setFailed(`Missing heartbeat file: ${path}`);
+              return;
+            }
+
+            let state;
+            try {
+              state = JSON.parse(fs.readFileSync(path, "utf8"));
+            } catch (error) {
+              core.setFailed(`Invalid JSON in ${path}: ${error.message}`);
+              return;
+            }
+
+            const lastRunUtc = state.last_run_utc;
+            if (!lastRunUtc) {
+              core.setFailed("state.json does not contain last_run_utc");
+              return;
+            }
+
+            const lastRun = new Date(lastRunUtc);
+            if (Number.isNaN(lastRun.getTime())) {
+              core.setFailed(`Invalid last_run_utc value: ${lastRunUtc}`);
+              return;
+            }
+
+            const now = new Date();
+            const ageMinutes = (now.getTime() - lastRun.getTime()) / 60000;
+
+            // Ensure monitoring label exists.
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: alertLabel });
+            } catch {
+              await github.rest.issues.createLabel({
+                owner,
+                repo,
+                name: alertLabel,
+                color: "b60205",
+                description: "Alerts when seismic data feed is stale"
+              });
+            }
+
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: "open",
+              labels: alertLabel,
+              per_page: 100
+            });
+
+            const existingAlert = openIssues.find((issue) => issue.title === alertTitle);
+
+            if (ageMinutes > staleMinutes) {
+              const body = [
+                "Automated monitor detected stale seismic feed heartbeat.",
+                "",
+                `- Threshold: ${staleMinutes} minutes`,
+                `- Current age: ${ageMinutes.toFixed(1)} minutes`,
+                `- last_run_utc: ${lastRunUtc}`,
+                `- checked_at_utc: ${now.toISOString()}`,
+                "",
+                "Investigate workflow: `Refresh IGP Seismic Feed`."
+              ].join("\n");
+
+              if (!existingAlert) {
+                await github.rest.issues.create({
+                  owner,
+                  repo,
+                  title: alertTitle,
+                  body,
+                  labels: [alertLabel]
+                });
+                core.notice("Stale heartbeat detected. Created alert issue.");
+              } else {
+                core.notice("Stale heartbeat detected. Alert issue already open.");
+              }
+            } else if (existingAlert) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: existingAlert.number,
+                body: [
+                  "Heartbeat recovered.",
+                  "",
+                  `- Current age: ${ageMinutes.toFixed(1)} minutes`,
+                  `- last_run_utc: ${lastRunUtc}`,
+                  `- checked_at_utc: ${now.toISOString()}`
+                ].join("\n")
+              });
+              await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: existingAlert.number,
+                state: "closed"
+              });
+              core.notice("Heartbeat healthy. Closed existing alert issue.");
+            } else {
+              core.notice("Heartbeat healthy. No alert issue needed.");
+            }
+
+            core.summary
+              .addHeading("Seismic Feed Heartbeat Check")
+              .addRaw(`last_run_utc: ${lastRunUtc}\n`, true)
+              .addRaw(`checked_at_utc: ${now.toISOString()}\n`, true)
+              .addRaw(`age_minutes: ${ageMinutes.toFixed(1)}\n`, true)
+              .addRaw(`threshold_minutes: ${staleMinutes}\n`, true)
+              .write();
