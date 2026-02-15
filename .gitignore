@@ -1,0 +1,3 @@
+__pycache__/
+*.pyc
+seismic_bi_stream/data/igp_seismic.db

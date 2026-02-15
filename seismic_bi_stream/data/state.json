@@ -1,0 +1,25 @@
+{
+  "known_fields": {
+    "code": "esriFieldTypeString",
+    "departamento": "esriFieldTypeString",
+    "fecha": "esriFieldTypeDate",
+    "fechaevento": "esriFieldTypeDate",
+    "hora": "esriFieldTypeString",
+    "int_": "esriFieldTypeString",
+    "lat": "esriFieldTypeDouble",
+    "lon": "esriFieldTypeDouble",
+    "mag": "esriFieldTypeString",
+    "magnitud": "esriFieldTypeDouble",
+    "negprof": "esriFieldTypeInteger",
+    "objectid": "esriFieldTypeOID",
+    "prof": "esriFieldTypeInteger",
+    "profundidad": "esriFieldTypeString",
+    "ref": "esriFieldTypeString",
+    "reporte": "esriFieldTypeSmallInteger",
+    "sentido": "esriFieldTypeString",
+    "shape": "esriFieldTypeGeometry",
+    "ultimo": "esriFieldTypeString"
+  },
+  "last_objectid": 1738,
+  "last_run_utc": "2026-02-15T14:51:34Z"
+}

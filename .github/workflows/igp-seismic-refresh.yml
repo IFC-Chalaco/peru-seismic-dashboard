@@ -1,0 +1,40 @@
+name: Refresh IGP Seismic Feed
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-feed:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run ingestor
+        run: |
+          python3 seismic_bi_stream/igp_seismic_stream.py
+
+      - name: Commit updated feed files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add seismic_bi_stream/data/state.json
+          git add seismic_bi_stream/exports/earthquakes_live.csv
+          git add seismic_bi_stream/exports/earthquakes_live.geojson
+          if git diff --staged --quiet; then
+            echo "No data changes to commit."
+          else
+            git commit -m "chore: refresh IGP seismic feed"
+            git push
+          fi
