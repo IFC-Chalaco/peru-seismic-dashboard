@@ -1530,6 +1530,7 @@ def export_curated_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
             reporte,
             ingested_at_utc
         FROM raw_events
+        WHERE COALESCE(TRIM(event_ts_utc), '') <> ''
         ORDER BY event_ts_utc DESC, objectid DESC
         """
     ).fetchall()
