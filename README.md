@@ -1,4 +1,4 @@
-h# IGP Seismic Stream for Tableau/Power BI
+# IGP Seismic Stream for Tableau/Power BI
 
 This pipeline ingests public seismic events from the official IGP ArcGIS service and exports BI-ready files that can refresh continuously.
 
