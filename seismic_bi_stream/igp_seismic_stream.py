@@ -185,6 +185,33 @@ def parse_datetime_to_utc_iso(value: Any, assume_tz: ZoneInfo | timezone | None 
     if not raw:
         return None
 
+    compact = raw.replace(" ", "")
+    if re.fullmatch(r"\d{14}", compact):
+        try:
+            dt = datetime.strptime(compact, "%Y%m%d%H%M%S")
+            dt = dt.replace(tzinfo=assume_tz or timezone.utc)
+            return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        except ValueError:
+            pass
+
+    if re.fullmatch(r"\d{8}", compact):
+        try:
+            dt = datetime.strptime(compact, "%Y%m%d")
+            dt = dt.replace(tzinfo=assume_tz or timezone.utc)
+            return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        except ValueError:
+            pass
+
+    if re.fullmatch(r"\d{8}\s+\d{1,6}", raw):
+        date_part, time_part = raw.split()
+        time_digits = time_part.zfill(6)
+        try:
+            dt = datetime.strptime(f"{date_part}{time_digits}", "%Y%m%d%H%M%S")
+            dt = dt.replace(tzinfo=assume_tz or timezone.utc)
+            return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        except ValueError:
+            pass
+
     as_int = to_int(raw)
     if as_int is not None and re.fullmatch(r"-?\d+", raw):
         return epoch_to_utc_iso(as_int)
@@ -274,6 +301,34 @@ def build_datetime_from_parts(
     except ValueError:
         return None
     return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def normalize_time_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    if ":" in raw:
+        parts = raw.split(":")
+        if len(parts) == 3:
+            try:
+                hh = int(parts[0])
+                mm = int(parts[1])
+                ss = int(parts[2])
+            except ValueError:
+                return raw
+            if 0 <= hh <= 23 and 0 <= mm <= 59 and 0 <= ss <= 59:
+                return f"{hh:02d}:{mm:02d}:{ss:02d}"
+        return raw
+    if re.fullmatch(r"\d{1,6}", raw):
+        digits = raw.zfill(6)
+        hh = int(digits[0:2])
+        mm = int(digits[2:4])
+        ss = int(digits[4:6])
+        if 0 <= hh <= 23 and 0 <= mm <= 59 and 0 <= ss <= 59:
+            return f"{hh:02d}:{mm:02d}:{ss:02d}"
+    return raw
 
 
 def decode_text(raw: bytes) -> str:
@@ -1110,6 +1165,17 @@ def import_historical_source(
             pick_row_value(row, key_map, ["objectid", "id", "oid", "id_evento", "src_objectid"])
         )
 
+        fecha_utc_raw = pick_row_value(
+            row,
+            key_map,
+            ["fecha_utc", "fechautc"],
+        )
+        hora_utc_raw = pick_row_value(
+            row,
+            key_map,
+            ["hora_utc", "horautc"],
+        )
+
         fecha_raw = pick_row_value(
             row,
             key_map,
@@ -1118,6 +1184,7 @@ def import_historical_source(
                 "fecha_ms",
                 "src_fecha",
                 "fecha_utc",
+                "fechautc",
                 "date",
                 "fecha_hora",
                 "fecha_hora_utc",
@@ -1154,7 +1221,7 @@ def import_historical_source(
         hora_value = pick_row_value(
             row,
             key_map,
-            ["hora", "hora_utc", "horautc", "time", "event_time_local", "src_hora"],
+            ["hora_utc", "horautc", "hora", "time", "event_time_local", "src_hora"],
         )
         if hora_value is None:
             hora_value = pick_row_value_contains(
@@ -1163,7 +1230,7 @@ def import_historical_source(
                 includes=["hora"],
                 excludes=["fech", "ms"],
             )
-        hora_text = str(hora_value) if hora_value is not None else None
+        hora_text = normalize_time_text(hora_value)
 
         event_ts_utc_raw = pick_row_value(
             row, key_map, ["event_ts_utc", "timestamp_utc", "utc_datetime", "datetime_utc"]
@@ -1191,7 +1258,11 @@ def import_historical_source(
         if event_ts_utc is None:
             event_ts_utc = parse_datetime_to_utc_iso(fechaevento_raw, assume_tz=LOCAL_TZ)
         if event_ts_utc is None and hora_text and fecha_raw is not None:
-            event_ts_utc = parse_datetime_to_utc_iso(f"{fecha_raw} {hora_text}", assume_tz=LOCAL_TZ)
+            parts_tz = timezone.utc if (fecha_utc_raw is not None or hora_utc_raw is not None) else LOCAL_TZ
+            event_ts_utc = parse_datetime_to_utc_iso(
+                f"{fecha_raw} {hora_text}",
+                assume_tz=parts_tz,
+            )
         if event_ts_utc is None:
             year_part = pick_row_value(
                 row,
