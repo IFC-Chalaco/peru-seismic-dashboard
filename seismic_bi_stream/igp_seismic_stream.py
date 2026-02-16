@@ -39,6 +39,7 @@ ET_TZ = ZoneInfo("America/New_York")
 class RunSummary:
     new_rows: int
     historical_rows: int
+    historical_error: str | None
     latest_objectid: int
     total_rows: int
     new_fields: list[str]
@@ -323,7 +324,15 @@ def parse_xlsx_rows(raw: bytes) -> list[dict[str, Any]]:
     ns_doc_rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
     ns_pkg_rel = "http://schemas.openxmlformats.org/package/2006/relationships"
 
-    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+    try:
+        zf_obj = zipfile.ZipFile(io.BytesIO(raw))
+    except zipfile.BadZipFile as exc:
+        raise RuntimeError(
+            "Historical source is not a valid XLSX file. "
+            "Check IGP_HISTORICAL_SOURCE_URL points to a direct downloadable file."
+        ) from exc
+
+    with zf_obj as zf:
         workbook_xml = ET.fromstring(zf.read("xl/workbook.xml"))
         first_sheet = workbook_xml.find(f".//{{{ns_main}}}sheets/{{{ns_main}}}sheet")
         if first_sheet is None:
@@ -1444,15 +1453,25 @@ def run_once(
             )
             new_fields = sync_schema_metadata(conn, metadata, known_fields)
 
-        historical_rows, historical_refreshed = import_historical_source(
-            conn=conn,
-            state=state,
-            source=historical_source,
-            timeout_seconds=timeout_seconds,
-            insecure_skip_verify=insecure_skip_verify,
-            refresh_hours=historical_refresh_hours,
-            force_refresh=force_historical_refresh,
-        )
+        historical_rows = 0
+        historical_refreshed = False
+        historical_error: str | None = None
+        try:
+            historical_rows, historical_refreshed = import_historical_source(
+                conn=conn,
+                state=state,
+                source=historical_source,
+                timeout_seconds=timeout_seconds,
+                insecure_skip_verify=insecure_skip_verify,
+                refresh_hours=historical_refresh_hours,
+                force_refresh=force_historical_refresh,
+            )
+            state.pop("historical_last_error", None)
+            state.pop("historical_last_error_utc", None)
+        except Exception as exc:
+            historical_error = str(exc)
+            state["historical_last_error"] = historical_error
+            state["historical_last_error_utc"] = utc_now_iso()
 
         if skip_live_fetch:
             upsert_count, latest_seen = 0, last_objectid
@@ -1486,6 +1505,7 @@ def run_once(
         return RunSummary(
             new_rows=upsert_count,
             historical_rows=historical_rows,
+            historical_error=historical_error,
             latest_objectid=int(state["last_objectid"]),
             total_rows=count_rows(conn),
             new_fields=new_fields,
@@ -1618,6 +1638,7 @@ def main() -> int:
                         "status": "ok",
                         "new_rows": summary.new_rows,
                         "historical_rows": summary.historical_rows,
+                        "historical_error": summary.historical_error,
                         "latest_objectid": summary.latest_objectid,
                         "total_rows": summary.total_rows,
                         "new_fields": summary.new_fields,

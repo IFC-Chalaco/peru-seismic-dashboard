@@ -148,6 +148,11 @@ In GitHub:
 
 If `IGP_HISTORICAL_SOURCE_URL` is empty, the workflow runs live-only mode.
 
+If historical import fails, the workflow still publishes live data and records:
+- `historical_last_error`
+- `historical_last_error_utc`
+in `seismic_bi_stream/data/state.json`.
+
 Example official historical source:
 
 `https://www.datosabiertos.gob.pe/sites/default/files/Catalogo1960_2023.xlsx`
