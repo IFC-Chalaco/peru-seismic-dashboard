@@ -96,16 +96,17 @@ python3 seismic_bi_stream/igp_seismic_stream.py --loop --interval-seconds 120
    - Web URL source if hosted publicly.
    - On-premises data gateway if file remains local.
 
-## Optional: GitHub Actions for online public feed
+## GitHub Actions for online public feed
 
-If this repository is pushed to GitHub, add a scheduled workflow that runs the script every few minutes and commits the updated `exports/` files. Then connect Tableau/Power BI to the raw GitHub URL for automatic cloud refresh.
+The repository is pushed to GitHub, an scheduled workflow has been added which runs the script every few minutes and commits the updated `exports/` files. Then a user can connect Tableau/Power BI to the raw GitHub URL for automatic cloud refresh.
 
-This project already includes:
+Please note this project already includes:
 - `.github/workflows/igp-seismic-refresh.yml`
 - `.github/workflows/igp-seismic-stale-alert.yml`
 
 The workflow commits only `exports/` and `state.json` (not SQLite). The ingestor automatically backfills if DB history is missing, so cloud runs still produce a full snapshot.
 
+## Control
 ### Stale-feed alert
 
 `igp-seismic-stale-alert.yml` checks `seismic_bi_stream/data/state.json` every 10 minutes.
