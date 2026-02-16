@@ -1,6 +1,7 @@
 {
-  "historical_last_error": "[Errno 2] No such file or directory: 'ttps:/www.datosabiertos.gob.pe/sites/default/files/Catalogo1960_2023.xlsx'",
-  "historical_last_error_utc": "2026-02-16T19:10:59Z",
+  "historical_last_refresh_et": "2026-02-16T14:14:21-05:00",
+  "historical_last_refresh_utc": "2026-02-16T19:14:21Z",
+  "historical_source": "https://www.datosabiertos.gob.pe/sites/default/files/Catalogo1960_2023.xlsx",
   "known_fields": {
     "code": "esriFieldTypeString",
     "departamento": "esriFieldTypeString",
@@ -23,6 +24,6 @@
     "ultimo": "esriFieldTypeString"
   },
   "last_objectid": 1741,
-  "last_run_et": "2026-02-16T14:11:00-05:00",
-  "last_run_utc": "2026-02-16T19:11:00Z"
+  "last_run_et": "2026-02-16T14:14:23-05:00",
+  "last_run_utc": "2026-02-16T19:14:23Z"
 }
