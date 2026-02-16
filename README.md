@@ -188,11 +188,16 @@ Generated files:
 - `seismic_bi_stream/data/state.json`
 - `seismic_bi_stream/exports/earthquakes_live.csv`
 - `seismic_bi_stream/exports/earthquakes_live_curated.csv`
+- `seismic_bi_stream/exports/earthquakes_live_preview.csv`
 - `seismic_bi_stream/exports/earthquakes_live.geojson`
 
 Recommended BI feed (clean and de-duplicated):
 
 https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live_curated.csv
+
+Preview file for fast GitHub/browser inspection (latest subset):
+
+https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live_preview.csv
 
 ---
 
@@ -237,6 +242,7 @@ Recommended semantic roles:
 - Kept ET-ready fields in curated output: `event_ts_et`, `event_date_et`, `event_time_et`.
 - Enforced historical refresh when runner DB is empty (important for ephemeral GitHub Actions runners).
 - Curated export now excludes rows with blank `event_ts_utc`.
+- Added `earthquakes_live_preview.csv` (small latest subset for fast preview and sharing).
 - Current validated coverage in curated feed: `1960` to `2026`.
 
 ---

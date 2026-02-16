@@ -45,6 +45,7 @@ class RunSummary:
     new_fields: list[str]
     csv_path: Path
     curated_csv_path: Path
+    preview_csv_path: Path
     geojson_path: Path
 
 
@@ -1510,10 +1511,20 @@ def export_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
     return len(rows)
 
 
-def export_curated_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
+def export_curated_csv(
+    conn: sqlite3.Connection,
+    csv_path: Path,
+    limit_rows: int | None = None,
+) -> int:
     conn.row_factory = sqlite3.Row
+    limit_clause = ""
+    query_params: tuple[Any, ...] = ()
+    if limit_rows is not None and limit_rows > 0:
+        limit_clause = "LIMIT ?"
+        query_params = (int(limit_rows),)
+
     rows = conn.execute(
-        """
+        f"""
         SELECT
             objectid,
             code,
@@ -1532,7 +1543,9 @@ def export_curated_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
         FROM raw_events
         WHERE COALESCE(TRIM(event_ts_utc), '') <> ''
         ORDER BY event_ts_utc DESC, objectid DESC
-        """
+        {limit_clause}
+        """,
+        query_params,
     ).fetchall()
 
     fieldnames = [
@@ -1666,6 +1679,7 @@ def run_once(
     state_path: Path,
     output_dir: Path,
     batch_size: int,
+    preview_rows: int,
     timeout_seconds: int,
     insecure_skip_verify: bool,
     historical_source: str | None,
@@ -1743,9 +1757,11 @@ def run_once(
 
         csv_path = output_dir / "earthquakes_live.csv"
         curated_csv_path = output_dir / "earthquakes_live_curated.csv"
+        preview_csv_path = output_dir / "earthquakes_live_preview.csv"
         geojson_path = output_dir / "earthquakes_live.geojson"
         export_csv(conn, csv_path)
         export_curated_csv(conn, curated_csv_path)
+        export_curated_csv(conn, preview_csv_path, limit_rows=preview_rows)
         export_geojson(conn, geojson_path)
 
         return RunSummary(
@@ -1757,6 +1773,7 @@ def run_once(
             new_fields=new_fields,
             csv_path=csv_path,
             curated_csv_path=curated_csv_path,
+            preview_csv_path=preview_csv_path,
             geojson_path=geojson_path,
         )
     finally:
@@ -1770,6 +1787,12 @@ def build_parser() -> argparse.ArgumentParser:
         parsed_refresh = to_int(env_refresh)
         if parsed_refresh is not None and parsed_refresh > 0:
             historical_refresh_default = parsed_refresh
+    preview_rows_default = 500
+    env_preview_rows = os.getenv("IGP_PREVIEW_ROWS", "").strip()
+    if env_preview_rows:
+        parsed_preview_rows = to_int(env_preview_rows)
+        if parsed_preview_rows is not None and parsed_preview_rows > 0:
+            preview_rows_default = parsed_preview_rows
 
     parser = argparse.ArgumentParser(
         description="Stream IGP seismic data into SQLite + BI-friendly CSV/GeoJSON."
@@ -1797,6 +1820,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=500,
         help="Max events fetched per API call (layer max is 2000).",
+    )
+    parser.add_argument(
+        "--preview-rows",
+        type=int,
+        default=preview_rows_default,
+        help="Rows to publish in earthquakes_live_preview.csv (latest events).",
     )
     parser.add_argument(
         "--timeout-seconds",
@@ -1857,6 +1886,8 @@ def main() -> int:
 
     if args.batch_size < 1 or args.batch_size > 2000:
         parser.error("--batch-size must be between 1 and 2000.")
+    if args.preview_rows < 1:
+        parser.error("--preview-rows must be at least 1.")
     if args.interval_seconds < 5:
         parser.error("--interval-seconds must be at least 5.")
     if args.historical_refresh_hours < 1:
@@ -1869,6 +1900,7 @@ def main() -> int:
                 state_path=args.state_path,
                 output_dir=args.output_dir,
                 batch_size=args.batch_size,
+                preview_rows=args.preview_rows,
                 timeout_seconds=args.timeout_seconds,
                 insecure_skip_verify=args.insecure_skip_verify,
                 historical_source=args.historical_source,
@@ -1890,6 +1922,7 @@ def main() -> int:
                         "new_fields": summary.new_fields,
                         "csv": str(summary.csv_path),
                         "curated_csv": str(summary.curated_csv_path),
+                        "preview_csv": str(summary.preview_csv_path),
                         "geojson": str(summary.geojson_path),
                         "run_at_utc": now_utc,
                         "run_at_et": now_et,

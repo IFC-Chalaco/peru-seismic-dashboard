@@ -25,6 +25,7 @@ jobs:
         env:
           IGP_HISTORICAL_SOURCE_URL: ${{ vars.IGP_HISTORICAL_SOURCE_URL }}
           IGP_HISTORICAL_REFRESH_HOURS: ${{ vars.IGP_HISTORICAL_REFRESH_HOURS }}
+          IGP_PREVIEW_ROWS: ${{ vars.IGP_PREVIEW_ROWS }}
         run: |
           if [ -n "${IGP_HISTORICAL_SOURCE_URL:-}" ]; then
             python3 seismic_bi_stream/igp_seismic_stream.py \
@@ -40,6 +41,7 @@ jobs:
           git add seismic_bi_stream/data/state.json
           git add seismic_bi_stream/exports/earthquakes_live.csv
           git add seismic_bi_stream/exports/earthquakes_live_curated.csv
+          git add seismic_bi_stream/exports/earthquakes_live_preview.csv
           git add seismic_bi_stream/exports/earthquakes_live.geojson
           if git diff --staged --quiet; then
             echo "No data changes to commit."
