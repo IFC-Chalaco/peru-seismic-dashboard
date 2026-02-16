@@ -1,119 +1,266 @@
-# IGP Seismic Stream for Tableau/Power BI
-This pipeline automatically pulls public seismic data directly from the official IGP ArcGIS service, producing BI-ready files that enable continuous, real-time dashboards. The project's goal is to maintain a live, automated data feed with incremental updates and automatic schema-change detection.
+# 🌎 IGP Seismic Data Stream
+## Automated Public Seismic Data Pipeline for BI Dashboards
+## Flujo Automatizado de Datos Sísmicos Públicos para BI
 
-Data source:
-- `https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/MapServer/0`
+---
 
-## What it does
+# 🇺🇸 English
 
-- Pulls new events incrementally using `objectid`.
-- Stores history in SQLite (`raw_events` table).
-- Preserves full raw attributes JSON for each event.
-- Detects schema changes by checking ArcGIS layer metadata (`schema_fields` and `schema_changes` tables).
-- Rebuilds:
-  - `earthquakes_live.csv` (flat table for Tableau/Power BI)
-  - `earthquakes_live_curated.csv` (recommended clean feed for Tableau/Google Sheets)
+## Overview
+
+This project implements a cloud-automated data ingestion pipeline that continuously pulls public seismic data from the official IGP (Instituto Geofísico del Perú) ArcGIS REST service and publishes BI-ready datasets for visualization tools such as Tableau and Power BI.
+
+The objective is to maintain a reliable, incremental, schema-aware public data feed suitable for real-time dashboards and analytics.
+
+**Official public data source:**
+
+https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/MapServer/0
+
+This repository does NOT host private data.
+It consumes publicly available government data and republishes structured derivatives for analytics purposes.
+
+---
+
+## Architecture Summary
+
+This project is a:
+
+- Data ingestion pipeline
+- Cloud-automated data feed
+- Workflow-orchestrated export system
+- Schema-change monitoring system
+
+It is NOT:
+
+- A custom REST API
+- A web scraping system
+- A proprietary data service
+
+The pipeline consumes an official ArcGIS REST endpoint and republishes structured CSV and GeoJSON files.
+
+---
+
+## What the Pipeline Does
+
+- Incrementally pulls new seismic events using `objectid`
+- Stores full history in SQLite (`raw_events` table)
+- Preserves full raw attributes JSON for auditability
+- Detects ArcGIS schema changes via metadata inspection
+- Regenerates export files on every run:
+  - `earthquakes_live.csv` (full flat feed)
+  - `earthquakes_live_curated.csv` (recommended BI feed)
   - `earthquakes_live.geojson` (map feed)
-- Includes timestamp fields for both UTC and US Eastern Time in the CSV:
+- Includes standardized timestamps:
   - `event_ts_utc`
   - `event_ts_et`
   - `event_date_et`
   - `event_time_et`
+- Automatically surfaces new source fields as `src_<fieldname>` columns
 
-If IGP adds a new field, it is captured in raw JSON immediately and appears as a new `src_<fieldname>` column in the CSV on subsequent exports.
+If the source schema changes, the pipeline captures new fields immediately without breaking exports.
 
-## Steps taken
+---
 
-1. Create a GitHub repository and push the project files.
-2. Confirm `origin` points to your GitHub repo and push `main`.
-3. Enable GitHub Actions write access:
-   - `Settings` -> `Actions` -> `General` -> `Workflow permissions` -> `Read and write permissions`.
-4. Run `Refresh IGP Seismic Feed` once manually from the `Actions` tab.
-5. Verify published outputs:
-   - `seismic_bi_stream/exports/earthquakes_live.csv`
-   - `seismic_bi_stream/exports/earthquakes_live.geojson`
-6. Connect Power BI/Tableau to the public raw CSV URL in GitHub.
-7. Enable scheduled refresh in Power BI Service.
-8. Use `IGP Seismic Feed Stale Alert` to monitor heartbeat drift and open/close alert issues automatically.
+## Data Privacy & Public Safety
 
-Operational note:
-- With GitHub Actions enabled, your computer does not need to be on for data updates.
-- Keep local `--loop` mode only for development or ad hoc testing.
+This repository:
 
-## Data Flow and API Clarification
+- Does not store credentials
+- Does not store personal data
+- Does not expose system secrets
+- Does not publish local file paths
+- Commits only derived public datasets
 
-- Source API: IGP ArcGIS REST service (`SismosReportados` layer).
-- This project is a data ingestion and publishing pipeline, not a custom REST API service.
-- Output interface: versioned GitHub files (CSV and GeoJSON) consumed by BI tools.
-- Correct terminology for portfolio: `data ingestion pipeline`, `automated data feed`, `workflow orchestration`, and `schema-change monitoring`.
+Only the following are committed by automation:
 
-## Run once
+- CSV exports
+- GeoJSON exports
+- `state.json` (heartbeat metadata)
+
+The SQLite database file is NOT published.
+
+---
+
+## Running the Pipeline Locally
+
+Run once:
 
 ```bash
 python3 seismic_bi_stream/igp_seismic_stream.py
 ```
 
-If your machine has TLS CA issues, use:
+If TLS CA issues occur:
 
 ```bash
 python3 seismic_bi_stream/igp_seismic_stream.py --insecure-skip-verify
 ```
 
-## Run continuously (near-real-time)
+Run continuously (development mode only):
 
 ```bash
 python3 seismic_bi_stream/igp_seismic_stream.py --loop --interval-seconds 120
 ```
 
-## Output files
+Continuous mode is recommended only for local testing.
+Production automation is handled by GitHub Actions.
 
-- `seismic_bi_stream/data/igp_seismic.db`
+---
+
+## GitHub Actions (Cloud Automation)
+
+The repository includes:
+
+- `.github/workflows/igp-seismic-refresh.yml`
+- `.github/workflows/igp-seismic-stale-alert.yml`
+
+### Refresh Workflow
+
+- Runs on a schedule
+- Pulls new seismic events
+- Rebuilds export files
+- Commits updated CSV/GeoJSON
+- Updates `state.json`
+
+No local machine is required for updates.
+
+---
+
+## Monitoring & Control
+
+### Stale Feed Alert
+
+The workflow `igp-seismic-stale-alert.yml`:
+
+- Checks `state.json` every 10 minutes
+- If `last_run_utc` is older than 30 minutes:
+  - Opens a GitHub issue:
+    `[Alert] IGP seismic feed heartbeat stale`
+- Automatically closes the alert issue if the feed recovers
+
+To change alert sensitivity, modify:
+
+`STALE_MINUTES`
+
+inside:
+
+`.github/workflows/igp-seismic-stale-alert.yml`
+
+---
+
+## Output Files
+
+Generated files:
+
 - `seismic_bi_stream/data/state.json`
 - `seismic_bi_stream/exports/earthquakes_live.csv`
 - `seismic_bi_stream/exports/earthquakes_live_curated.csv`
 - `seismic_bi_stream/exports/earthquakes_live.geojson`
 
-Recommended BI feed (clean columns only):
-- `https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live_curated.csv`
+Recommended BI feed (clean dataset):
 
-## Connect to Tableau
+`earthquakes_live_curated.csv`
 
-1. Connect to `Text file` and select `earthquakes_live.csv`.
-2. Set geospatial role:
-   - `lat` as Latitude
-   - `lon` as Longitude
-3. Publish workbook to Tableau Public/Server.
-4. Refresh strategy:
-   - If file is hosted at a public URL, use web-hosted CSV refresh.
-   - If local/on-prem, use Tableau Bridge.
+---
 
-## Connect to Power BI
+## Connecting to Tableau
 
-1. `Get Data` -> `Text/CSV` -> select `earthquakes_live.csv`.
-2. Set `lat` / `lon` data categories.
-3. Publish to Power BI Service.
-4. Configure scheduled refresh:
-   - Web URL source if hosted publicly.
-   - On-premises data gateway if file remains local.
+1. Connect → Text File
+2. Select `earthquakes_live_curated.csv`
+3. Assign geospatial roles:
+   - `lat` → Latitude
+   - `lon` → Longitude
+4. Use `event_ts_et` for time axis
 
-## GitHub Actions for online public feed
+If using public URL hosting, use Web Data Connector refresh.
 
-The repository is pushed to GitHub, an scheduled workflow has been added which runs the script every few minutes and commits the updated `exports/` files. Then a user can connect Tableau/Power BI to the raw GitHub URL for automatic cloud refresh.
+---
 
-Please note this project already includes:
-- `.github/workflows/igp-seismic-refresh.yml`
-- `.github/workflows/igp-seismic-stale-alert.yml`
+## Connecting to Power BI
 
-The workflow commits only `exports/` and `state.json` (not SQLite). The ingestor automatically backfills if DB history is missing, so cloud runs still produce a full snapshot.
+1. Get Data → Text/CSV
+2. Select curated CSV
+3. Set `lat` / `lon` data categories
+4. Publish to Power BI Service
+5. Enable scheduled refresh (web source if hosted publicly)
 
-## Control
-### Stale-feed alert
+---
 
-`igp-seismic-stale-alert.yml` checks `seismic_bi_stream/data/state.json` every 10 minutes.
+## Recommended Portfolio Terminology
 
-- If `last_run_utc` is older than 30 minutes, it opens a GitHub issue:
-  - `[Alert] IGP seismic feed heartbeat stale`
-- If the feed recovers, it comments and closes that alert issue automatically.
+Use the following professional terms:
 
-To change the alert threshold, edit:
-- `STALE_MINUTES` in `.github/workflows/igp-seismic-stale-alert.yml`
+- Data ingestion pipeline
+- Cloud-automated data feed
+- Incremental ETL system
+- Schema-change detection
+- Workflow orchestration
+- Public data transformation layer
+
+---
+
+# 🇪🇸 Español
+
+## Descripción General
+
+Este proyecto implementa un pipeline automatizado en la nube que consume datos sísmicos públicos desde el servicio oficial ArcGIS REST del IGP (Instituto Geofísico del Perú) y publica datasets estructurados listos para herramientas de Business Intelligence como Tableau y Power BI.
+
+El objetivo es mantener un flujo de datos incremental, confiable y resistente a cambios de esquema, apto para dashboards en tiempo real.
+
+Fuente oficial pública:
+
+https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/MapServer/0
+
+Este repositorio:
+
+- No contiene datos privados
+- No expone credenciales
+- No almacena información personal
+- Solo transforma y republica datos públicos
+
+---
+
+## Qué Hace el Pipeline
+
+- Descarga eventos sísmicos incrementalmente usando `objectid`
+- Guarda historial en SQLite (`raw_events`)
+- Preserva atributos originales en JSON
+- Detecta cambios en el esquema del ArcGIS
+- Regenera en cada ejecución:
+  - `earthquakes_live.csv`
+  - `earthquakes_live_curated.csv`
+  - `earthquakes_live.geojson`
+- Incluye timestamps estandarizados:
+  - `event_ts_utc`
+  - `event_ts_et`
+  - `event_date_et`
+  - `event_time_et`
+- Si la fuente agrega un nuevo campo, se refleja automáticamente como `src_<campo>`
+
+---
+
+## Automatización y Monitoreo
+
+Incluye:
+
+- `igp-seismic-refresh.yml`
+- `igp-seismic-stale-alert.yml`
+
+El sistema:
+
+- Ejecuta el pipeline automáticamente
+- Actualiza exportaciones
+- Monitorea el estado del feed
+- Abre y cierra alertas automáticamente si detecta interrupciones
+
+No se requiere que una computadora local esté encendida.
+
+---
+
+## Terminología Profesional Recomendada
+
+- Pipeline de ingestión de datos
+- Flujo automatizado en la nube
+- Sistema ETL incremental
+- Monitoreo de cambios de esquema
+- Orquestación de workflows
+- Transformación de datos públicos
