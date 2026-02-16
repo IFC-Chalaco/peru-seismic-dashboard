@@ -35,6 +35,7 @@ class RunSummary:
     total_rows: int
     new_fields: list[str]
     csv_path: Path
+    curated_csv_path: Path
     geojson_path: Path
 
 
@@ -656,6 +657,82 @@ def export_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
     return len(rows)
 
 
+def export_curated_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """
+        SELECT
+            objectid,
+            code,
+            event_ts_utc,
+            lat,
+            lon,
+            magnitud,
+            prof,
+            profundidad,
+            intensidad,
+            departamento,
+            referencia,
+            ultimo,
+            reporte,
+            ingested_at_utc
+        FROM raw_events
+        ORDER BY objectid DESC
+        """
+    ).fetchall()
+
+    fieldnames = [
+        "objectid",
+        "code",
+        "event_ts_et",
+        "event_date_et",
+        "event_time_et",
+        "event_ts_utc",
+        "lat",
+        "lon",
+        "magnitud",
+        "prof",
+        "profundidad",
+        "intensidad",
+        "departamento",
+        "referencia",
+        "ultimo",
+        "reporte",
+        "ingested_at_utc",
+    ]
+
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            event_ts_et, event_date_et, event_time_et = iso_utc_to_zone_fields(
+                row["event_ts_utc"], ET_TZ
+            )
+            writer.writerow(
+                {
+                    "objectid": row["objectid"],
+                    "code": row["code"],
+                    "event_ts_et": event_ts_et,
+                    "event_date_et": event_date_et,
+                    "event_time_et": event_time_et,
+                    "event_ts_utc": row["event_ts_utc"],
+                    "lat": row["lat"],
+                    "lon": row["lon"],
+                    "magnitud": row["magnitud"],
+                    "prof": row["prof"],
+                    "profundidad": row["profundidad"],
+                    "intensidad": row["intensidad"],
+                    "departamento": row["departamento"],
+                    "referencia": row["referencia"],
+                    "ultimo": row["ultimo"],
+                    "reporte": row["reporte"],
+                    "ingested_at_utc": row["ingested_at_utc"],
+                }
+            )
+    return len(rows)
+
+
 def export_geojson(conn: sqlite3.Connection, geojson_path: Path) -> None:
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
@@ -758,8 +835,10 @@ def run_once(
         save_state(state_path, state)
 
         csv_path = output_dir / "earthquakes_live.csv"
+        curated_csv_path = output_dir / "earthquakes_live_curated.csv"
         geojson_path = output_dir / "earthquakes_live.geojson"
         export_csv(conn, csv_path)
+        export_curated_csv(conn, curated_csv_path)
         export_geojson(conn, geojson_path)
 
         return RunSummary(
@@ -768,6 +847,7 @@ def run_once(
             total_rows=count_rows(conn),
             new_fields=new_fields,
             csv_path=csv_path,
+            curated_csv_path=curated_csv_path,
             geojson_path=geojson_path,
         )
     finally:
@@ -857,6 +937,7 @@ def main() -> int:
                         "total_rows": summary.total_rows,
                         "new_fields": summary.new_fields,
                         "csv": str(summary.csv_path),
+                        "curated_csv": str(summary.curated_csv_path),
                         "geojson": str(summary.geojson_path),
                         "run_at_utc": now_utc,
                         "run_at_et": now_et,

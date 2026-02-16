@@ -17,6 +17,7 @@ Data source:
 - Detects schema changes by checking ArcGIS layer metadata (`schema_fields` and `schema_changes` tables).
 - Rebuilds:
   - `earthquakes_live.csv` (flat table for Tableau/Power BI)
+  - `earthquakes_live_curated.csv` (recommended clean feed for Tableau/Google Sheets)
   - `earthquakes_live.geojson` (map feed)
 - Includes timestamp fields for both UTC and US Eastern Time in the CSV:
   - `event_ts_utc`
@@ -74,7 +75,11 @@ python3 seismic_bi_stream/igp_seismic_stream.py --loop --interval-seconds 120
 - `seismic_bi_stream/data/igp_seismic.db`
 - `seismic_bi_stream/data/state.json`
 - `seismic_bi_stream/exports/earthquakes_live.csv`
+- `seismic_bi_stream/exports/earthquakes_live_curated.csv`
 - `seismic_bi_stream/exports/earthquakes_live.geojson`
+
+Recommended BI feed (clean columns only):
+- `https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live_curated.csv`
 
 ## Connect to Tableau
 

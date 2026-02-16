@@ -31,6 +31,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add seismic_bi_stream/data/state.json
           git add seismic_bi_stream/exports/earthquakes_live.csv
+          git add seismic_bi_stream/exports/earthquakes_live_curated.csv
           git add seismic_bi_stream/exports/earthquakes_live.geojson
           if git diff --staged --quiet; then
             echo "No data changes to commit."
