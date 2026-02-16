@@ -1,10 +1,6 @@
 # IGP Seismic Stream for Tableau/Power BI
 
-This pipeline ingests public seismic events from the official IGP ArcGIS service and exports BI-ready files that can refresh continuously.
-
-## GitHub Description
-
-`Live Peru seismic data pipeline from official IGP ArcGIS feed to Power BI/Tableau (CSV + GeoJSON), with incremental updates and automatic schema-change detection.`
+'This pipeline automatically pulls public seismic data directly from the official IGP ArcGIS service, producing BI-ready files that enable continuous, real-time dashboards. The project's goal is to maintain a live, automated data feed with incremental updates and automatic schema-change detection.'
 
 Data source:
 - `https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/MapServer/0`
