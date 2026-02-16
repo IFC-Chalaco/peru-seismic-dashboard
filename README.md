@@ -196,6 +196,51 @@ https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismi
 
 ---
 
+## BI Field Dictionary (`earthquakes_live_curated.csv`)
+
+Use these data types in Power BI/Tableau:
+
+- `objectid`: Whole Number (surrogate id)
+- `code`: Text (event code when available)
+- `event_ts_et`: Date/Time (US Eastern Time)
+- `event_date_et`: Date
+- `event_time_et`: Time
+- `event_ts_utc`: Date/Time (UTC)
+- `lat`: Decimal Number (Latitude)
+- `lon`: Decimal Number (Longitude)
+- `magnitud`: Decimal Number
+- `prof`: Whole Number (depth in km)
+- `profundidad`: Text (depth class from source)
+- `intensidad`: Text
+- `departamento`: Text
+- `referencia`: Text
+- `ultimo`: Whole Number (source flag)
+- `reporte`: Whole Number (source report number)
+- `ingested_at_utc`: Date/Time (pipeline load timestamp)
+
+Recommended semantic roles:
+
+- `lat` -> Latitude
+- `lon` -> Longitude
+- Primary timeline -> `event_ts_et` (for ET audiences) or `event_ts_utc` (for UTC-standard reporting)
+
+---
+
+## Releases
+
+### 2026-02-16 - Historical + ET BI Feed Stabilization
+
+- Added historical backfill support from public CSV/XLSX sources.
+- Enabled direct ingestion of official IGP historical catalog (`Catalogo1960_2023.xlsx`).
+- Merged live ArcGIS feed + historical catalog into a single curated export.
+- Added robust parsing for compact UTC fields from historical files (e.g., `FECHA_UTC`, `HORA_UTC`).
+- Kept ET-ready fields in curated output: `event_ts_et`, `event_date_et`, `event_time_et`.
+- Enforced historical refresh when runner DB is empty (important for ephemeral GitHub Actions runners).
+- Curated export now excludes rows with blank `event_ts_utc`.
+- Current validated coverage in curated feed: `1960` to `2026`.
+
+---
+
 ## Connecting to Tableau
 
 1. Connect -> Text File
@@ -232,14 +277,14 @@ https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/Map
 Nota de alcance:
 
 - La capa ArcGIS en vivo puede incluir solo eventos recientes/del ano en curso.
-- Para historial completo, configure una fuente CSV historica y el pipeline hara merge con el feed en vivo.
+- Para historial completo, configure una fuente historica CSV/XLSX y el pipeline hara merge con el feed en vivo.
 
 ---
 
 ## Que Hace el Pipeline
 
 - Descarga eventos sismicos incrementalmente usando `objectid`
-- Puede importar un CSV historico y combinarlo con el feed en vivo
+- Puede importar una fuente historica CSV/XLSX y combinarla con el feed en vivo
 - Guarda historial en SQLite (`raw_events`)
 - Preserva atributos originales en JSON
 - Detecta cambios en el esquema del ArcGIS
