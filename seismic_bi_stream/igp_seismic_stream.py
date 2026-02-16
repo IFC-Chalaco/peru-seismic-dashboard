@@ -1684,8 +1684,9 @@ def run_once(
         init_db(conn)
 
         # In ephemeral runners (e.g., GitHub Actions), state may persist without DB history.
-        # If DB is empty, force a backfill to rebuild exports.
-        if count_rows(conn) == 0 and last_objectid > 0:
+        # If DB is empty, force a live backfill and historical refresh so exports stay complete.
+        db_is_empty = count_rows(conn) == 0
+        if db_is_empty and last_objectid > 0:
             last_objectid = 0
 
         if skip_live_fetch:
@@ -1702,14 +1703,14 @@ def run_once(
         historical_error: str | None = None
         try:
             historical_rows, historical_refreshed = import_historical_source(
-                conn=conn,
-                state=state,
-                source=historical_source,
-                timeout_seconds=timeout_seconds,
-                insecure_skip_verify=insecure_skip_verify,
-                refresh_hours=historical_refresh_hours,
-                force_refresh=force_historical_refresh,
-            )
+            conn=conn,
+            state=state,
+            source=historical_source,
+            timeout_seconds=timeout_seconds,
+            insecure_skip_verify=insecure_skip_verify,
+            refresh_hours=historical_refresh_hours,
+            force_refresh=(force_historical_refresh or db_is_empty),
+        )
             state.pop("historical_last_error", None)
             state.pop("historical_last_error_utc", None)
         except Exception as exc:
