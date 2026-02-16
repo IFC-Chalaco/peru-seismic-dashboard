@@ -1,6 +1,6 @@
 {
-  "historical_last_refresh_et": "2026-02-16T15:59:45-05:00",
-  "historical_last_refresh_utc": "2026-02-16T20:59:45Z",
+  "historical_last_refresh_et": "2026-02-16T16:38:03-05:00",
+  "historical_last_refresh_utc": "2026-02-16T21:38:03Z",
   "historical_source": "https://www.datosabiertos.gob.pe/sites/default/files/Catalogo1960_2023.xlsx",
   "known_fields": {
     "code": "esriFieldTypeString",
@@ -24,6 +24,6 @@
     "ultimo": "esriFieldTypeString"
   },
   "last_objectid": 1741,
-  "last_run_et": "2026-02-16T15:59:46-05:00",
-  "last_run_utc": "2026-02-16T20:59:46Z"
+  "last_run_et": "2026-02-16T16:38:05-05:00",
+  "last_run_utc": "2026-02-16T21:38:05Z"
 }
