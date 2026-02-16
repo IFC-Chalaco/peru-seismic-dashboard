@@ -185,19 +185,6 @@ If using public URL hosting, use Web Data Connector refresh.
 
 ---
 
-## Recommended Portfolio Terminology
-
-Use the following professional terms:
-
-- Data ingestion pipeline
-- Cloud-automated data feed
-- Incremental ETL system
-- Schema-change detection
-- Workflow orchestration
-- Public data transformation layer
-
----
-
 # 🇪🇸 Español
 
 ## Descripción General
@@ -254,13 +241,3 @@ El sistema:
 
 No se requiere que una computadora local esté encendida.
 
----
-
-## Terminología Profesional Recomendada
-
-- Pipeline de ingestión de datos
-- Flujo automatizado en la nube
-- Sistema ETL incremental
-- Monitoreo de cambios de esquema
-- Orquestación de workflows
-- Transformación de datos públicos
