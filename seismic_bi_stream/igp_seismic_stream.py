@@ -134,6 +134,31 @@ def pick_row_value(row: dict[str, Any], key_map: dict[str, str], aliases: list[s
     return None
 
 
+def pick_row_value_contains(
+    row: dict[str, Any],
+    key_map: dict[str, str],
+    includes: list[str],
+    excludes: list[str] | None = None,
+) -> Any:
+    excludes = excludes or []
+    include_norm = [normalize_key(token) for token in includes if token]
+    exclude_norm = [normalize_key(token) for token in excludes if token]
+    for norm_key, source_key in key_map.items():
+        if include_norm and not all(token in norm_key for token in include_norm):
+            continue
+        if exclude_norm and any(token in norm_key for token in exclude_norm):
+            continue
+        value = row.get(source_key)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped == "":
+                continue
+            return stripped
+        if value is not None:
+            return value
+    return None
+
+
 def epoch_to_utc_iso(value: int | float | None) -> str | None:
     if value is None:
         return None
@@ -203,6 +228,52 @@ def parse_excel_serial_to_utc_iso(
     tz = assume_tz or timezone.utc
     local_dt = datetime(1899, 12, 30, tzinfo=tz) + timedelta(days=serial)
     return local_dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def build_datetime_from_parts(
+    year_value: Any,
+    month_value: Any,
+    day_value: Any,
+    hour_value: Any,
+    minute_value: Any,
+    second_value: Any,
+    assume_tz: ZoneInfo | timezone | None = None,
+) -> str | None:
+    year = to_int(year_value)
+    month = to_int(month_value)
+    day = to_int(day_value)
+    if year is None or month is None or day is None:
+        return None
+    if year < 1800 or year > 2100:
+        return None
+    if month < 1 or month > 12:
+        return None
+    if day < 1 or day > 31:
+        return None
+
+    hour = to_int(hour_value)
+    minute = to_int(minute_value)
+    second = to_int(second_value)
+    if hour is None:
+        hour = 0
+    if minute is None:
+        minute = 0
+    if second is None:
+        second = 0
+
+    if hour < 0 or hour > 23:
+        return None
+    if minute < 0 or minute > 59:
+        return None
+    if second < 0 or second > 59:
+        return None
+
+    tz = assume_tz or timezone.utc
+    try:
+        dt = datetime(year, month, day, hour, minute, second, tzinfo=tz)
+    except ValueError:
+        return None
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def decode_text(raw: bytes) -> str:
@@ -1033,21 +1104,65 @@ def import_historical_source(
         code = pick_row_value(
             row,
             key_map,
-            ["code", "codigo", "cod", "event_code", "src_code"],
+            ["code", "codigo", "cod", "codigoevento", "event_code", "src_code"],
         )
         source_objectid = to_int(
             pick_row_value(row, key_map, ["objectid", "id", "oid", "id_evento", "src_objectid"])
         )
 
-        fecha_raw = pick_row_value(row, key_map, ["fecha", "fecha_ms", "src_fecha"])
+        fecha_raw = pick_row_value(
+            row,
+            key_map,
+            [
+                "fecha",
+                "fecha_ms",
+                "src_fecha",
+                "fecha_utc",
+                "date",
+                "fecha_hora",
+                "fecha_hora_utc",
+            ],
+        )
+        if fecha_raw is None:
+            fecha_raw = pick_row_value_contains(
+                row,
+                key_map,
+                includes=["fecha"],
+                excludes=["evento", "ms", "stamp"],
+            )
         fechaevento_raw = pick_row_value(
             row,
             key_map,
-            ["fechaevento", "fechaevento_ms", "src_fechaevento", "fecha_hora", "datetime"],
+            [
+                "fechaevento",
+                "fechaevento_ms",
+                "src_fechaevento",
+                "fecha_hora",
+                "datetime",
+                "datetime_utc",
+                "timestamp",
+            ],
         )
+        if fechaevento_raw is None:
+            fechaevento_raw = pick_row_value_contains(
+                row,
+                key_map,
+                includes=["fecha", "evento"],
+            )
         fecha_ms_int = to_epoch_ms(fecha_raw)
         fechaevento_ms_int = to_epoch_ms(fechaevento_raw)
-        hora_value = pick_row_value(row, key_map, ["hora", "event_time_local", "src_hora"])
+        hora_value = pick_row_value(
+            row,
+            key_map,
+            ["hora", "hora_utc", "horautc", "time", "event_time_local", "src_hora"],
+        )
+        if hora_value is None:
+            hora_value = pick_row_value_contains(
+                row,
+                key_map,
+                includes=["hora"],
+                excludes=["fech", "ms"],
+            )
         hora_text = str(hora_value) if hora_value is not None else None
 
         event_ts_utc_raw = pick_row_value(
@@ -1077,6 +1192,64 @@ def import_historical_source(
             event_ts_utc = parse_datetime_to_utc_iso(fechaevento_raw, assume_tz=LOCAL_TZ)
         if event_ts_utc is None and hora_text and fecha_raw is not None:
             event_ts_utc = parse_datetime_to_utc_iso(f"{fecha_raw} {hora_text}", assume_tz=LOCAL_TZ)
+        if event_ts_utc is None:
+            year_part = pick_row_value(
+                row,
+                key_map,
+                ["year", "anio", "ano", "yyyy", "año", "src_year"],
+            )
+            if year_part is None:
+                year_part = pick_row_value_contains(
+                    row,
+                    key_map,
+                    includes=["anio"],
+                )
+            month_part = pick_row_value(
+                row,
+                key_map,
+                ["month", "mes", "mm", "src_month"],
+            )
+            if month_part is None:
+                month_part = pick_row_value_contains(
+                    row,
+                    key_map,
+                    includes=["mes"],
+                )
+            day_part = pick_row_value(
+                row,
+                key_map,
+                ["day", "dia", "dd", "src_day"],
+            )
+            if day_part is None:
+                day_part = pick_row_value_contains(
+                    row,
+                    key_map,
+                    includes=["dia"],
+                )
+            hour_part = pick_row_value(
+                row,
+                key_map,
+                ["hour", "hh", "hora", "src_hour"],
+            )
+            minute_part = pick_row_value(
+                row,
+                key_map,
+                ["minute", "min", "minuto", "src_minute"],
+            )
+            second_part = pick_row_value(
+                row,
+                key_map,
+                ["second", "sec", "segundo", "src_second"],
+            )
+            event_ts_utc = build_datetime_from_parts(
+                year_value=year_part,
+                month_value=month_part,
+                day_value=day_part,
+                hour_value=hour_part,
+                minute_value=minute_part,
+                second_value=second_part,
+                assume_tz=LOCAL_TZ,
+            )
         if event_ts_utc is None:
             event_ts_utc, _, _, _ = parse_event_times(
                 fechaevento_ms=fechaevento_ms_int,
