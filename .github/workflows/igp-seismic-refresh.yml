@@ -22,8 +22,16 @@ jobs:
           python-version: "3.12"
 
       - name: Run ingestor
+        env:
+          IGP_HISTORICAL_SOURCE_URL: ${{ vars.IGP_HISTORICAL_SOURCE_URL }}
+          IGP_HISTORICAL_REFRESH_HOURS: ${{ vars.IGP_HISTORICAL_REFRESH_HOURS }}
         run: |
-          python3 seismic_bi_stream/igp_seismic_stream.py
+          if [ -n "${IGP_HISTORICAL_SOURCE_URL:-}" ]; then
+            python3 seismic_bi_stream/igp_seismic_stream.py \
+              --historical-source "${IGP_HISTORICAL_SOURCE_URL}"
+          else
+            python3 seismic_bi_stream/igp_seismic_stream.py
+          fi
 
       - name: Commit updated feed files
         run: |

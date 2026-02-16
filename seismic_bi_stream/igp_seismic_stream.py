@@ -5,7 +5,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import io
 import json
+import os
+import re
 import ssl
 import sqlite3
 import sys
@@ -31,6 +35,7 @@ ET_TZ = ZoneInfo("America/New_York")
 @dataclass
 class RunSummary:
     new_rows: int
+    historical_rows: int
     latest_objectid: int
     total_rows: int
     new_fields: list[str]
@@ -56,6 +61,11 @@ def to_int(value: Any) -> int | None:
         raw = value.strip()
         if not raw:
             return None
+        lowered = raw.lower()
+        if lowered in {"true", "t", "yes", "y", "si", "s"}:
+            return 1
+        if lowered in {"false", "f", "no", "n"}:
+            return 0
         try:
             if "." in raw:
                 parsed = float(raw)
@@ -84,6 +94,122 @@ def to_float(value: Any) -> float | None:
     return None
 
 
+def normalize_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value).lower())
+
+
+def build_row_key_map(row: dict[str, Any]) -> dict[str, str]:
+    key_map: dict[str, str] = {}
+    for key in row.keys():
+        normalized = normalize_key(key)
+        if normalized and normalized not in key_map:
+            key_map[normalized] = key
+    return key_map
+
+
+def pick_row_value(row: dict[str, Any], key_map: dict[str, str], aliases: list[str]) -> Any:
+    for alias in aliases:
+        source_key = key_map.get(normalize_key(alias))
+        if source_key is None:
+            continue
+        value = row.get(source_key)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped == "":
+                continue
+            return stripped
+        if value is not None:
+            return value
+    return None
+
+
+def epoch_to_utc_iso(value: int | float | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        ts = float(value)
+    except (TypeError, ValueError):
+        return None
+    if abs(ts) >= 1e11:
+        ts /= 1000.0
+    try:
+        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    except (OSError, OverflowError, ValueError):
+        return None
+    return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def parse_datetime_to_utc_iso(value: Any, assume_tz: ZoneInfo | timezone | None = None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return epoch_to_utc_iso(value)
+
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    as_int = to_int(raw)
+    if as_int is not None and re.fullmatch(r"-?\d+", raw):
+        return epoch_to_utc_iso(as_int)
+
+    as_float = to_float(raw)
+    if as_float is not None and re.fullmatch(r"-?\d+(\.\d+)?", raw):
+        return epoch_to_utc_iso(as_float)
+
+    iso_candidate = raw.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(iso_candidate)
+    except ValueError:
+        dt = None
+
+    if dt is None:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%d/%m/%Y %H:%M:%S"):
+            try:
+                dt = datetime.strptime(raw, fmt)
+                break
+            except ValueError:
+                continue
+        if dt is None:
+            return None
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=assume_tz or timezone.utc)
+
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def decode_text(raw: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def read_text_source(source: str, timeout_seconds: int, insecure_skip_verify: bool) -> str:
+    if source.startswith("http://") or source.startswith("https://"):
+        req = Request(source, headers={"User-Agent": "igp-seismic-stream/1.0"})
+        ssl_context = ssl.create_default_context()
+        if insecure_skip_verify:
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+        with urlopen(req, timeout=timeout_seconds, context=ssl_context) as response:
+            raw = response.read()
+        return decode_text(raw)
+
+    path = Path(source).expanduser()
+    raw = path.read_bytes()
+    return decode_text(raw)
+
+
+def stable_synthetic_objectid(seed: str) -> int:
+    digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()
+    numeric = int(digest[:15], 16)
+    return -(numeric + 1)
+
+
 def iso_utc_to_zone_fields(
     iso_utc: str | None, tz: ZoneInfo
 ) -> tuple[str | None, str | None, str | None]:
@@ -95,6 +221,15 @@ def iso_utc_to_zone_fields(
         return None, None, None
     local_dt = utc_dt.astimezone(tz).replace(microsecond=0)
     return local_dt.isoformat(), local_dt.date().isoformat(), local_dt.strftime("%H:%M:%S")
+
+
+def iso_to_utc_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
 
 
 def http_get_json(
@@ -449,6 +584,95 @@ def fetch_new_features(
     return features
 
 
+def upsert_raw_event(
+    conn: sqlite3.Connection,
+    *,
+    objectid: int,
+    code: Any,
+    event_ts_utc: str | None,
+    event_ts_local: str | None,
+    event_date_local: str | None,
+    event_time_local: str | None,
+    fecha_ms: int | None,
+    fechaevento_ms: int | None,
+    hora: str | None,
+    lat: float | None,
+    lon: float | None,
+    magnitud: float | None,
+    prof: int | None,
+    profundidad: Any,
+    intensidad: Any,
+    departamento: Any,
+    referencia: Any,
+    ultimo: int | None,
+    reporte: int | None,
+    mag: float | None,
+    raw_attributes: dict[str, Any],
+    raw_geometry: dict[str, Any],
+    ingested_at_utc: str,
+) -> bool:
+    before = conn.total_changes
+    conn.execute(
+        """
+        INSERT INTO raw_events (
+            objectid, code, event_ts_utc, event_ts_local, event_date_local, event_time_local,
+            fecha_ms, fechaevento_ms, hora, lat, lon, magnitud, prof, profundidad, intensidad,
+            departamento, referencia, ultimo, reporte, mag, raw_attributes_json, raw_geometry_json,
+            ingested_at_utc
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(objectid) DO UPDATE SET
+            code=excluded.code,
+            event_ts_utc=excluded.event_ts_utc,
+            event_ts_local=excluded.event_ts_local,
+            event_date_local=excluded.event_date_local,
+            event_time_local=excluded.event_time_local,
+            fecha_ms=excluded.fecha_ms,
+            fechaevento_ms=excluded.fechaevento_ms,
+            hora=excluded.hora,
+            lat=excluded.lat,
+            lon=excluded.lon,
+            magnitud=excluded.magnitud,
+            prof=excluded.prof,
+            profundidad=excluded.profundidad,
+            intensidad=excluded.intensidad,
+            departamento=excluded.departamento,
+            referencia=excluded.referencia,
+            ultimo=excluded.ultimo,
+            reporte=excluded.reporte,
+            mag=excluded.mag,
+            raw_attributes_json=excluded.raw_attributes_json,
+            raw_geometry_json=excluded.raw_geometry_json,
+            ingested_at_utc=excluded.ingested_at_utc
+        """,
+        (
+            objectid,
+            code,
+            event_ts_utc,
+            event_ts_local,
+            event_date_local,
+            event_time_local,
+            fecha_ms,
+            fechaevento_ms,
+            hora,
+            lat,
+            lon,
+            magnitud,
+            prof,
+            profundidad,
+            intensidad,
+            departamento,
+            referencia,
+            ultimo,
+            reporte,
+            mag,
+            json.dumps(raw_attributes, ensure_ascii=True, sort_keys=True),
+            json.dumps(raw_geometry, ensure_ascii=True, sort_keys=True),
+            ingested_at_utc,
+        ),
+    )
+    return conn.total_changes > before
+
+
 def upsert_features(conn: sqlite3.Connection, features: list[dict[str, Any]]) -> tuple[int, int]:
     inserted_rows = 0
     latest_objectid = 0
@@ -469,12 +693,9 @@ def upsert_features(conn: sqlite3.Connection, features: list[dict[str, Any]]) ->
         if not isinstance(geom, dict):
             geom = {}
 
-        fecha_ms = attrs.get("fecha")
-        fechaevento_ms = attrs.get("fechaevento")
-        hora = attrs.get("hora")
-        fecha_ms_int = to_int(fecha_ms)
-        fechaevento_ms_int = to_int(fechaevento_ms)
-        hora_text = str(hora) if hora is not None else None
+        fecha_ms_int = to_int(attrs.get("fecha"))
+        fechaevento_ms_int = to_int(attrs.get("fechaevento"))
+        hora_text = str(attrs.get("hora")) if attrs.get("hora") is not None else None
         event_ts_utc, event_ts_local, event_date_local, event_time_local = parse_event_times(
             fechaevento_ms=fechaevento_ms_int,
             fecha_ms=fecha_ms_int,
@@ -484,79 +705,221 @@ def upsert_features(conn: sqlite3.Connection, features: list[dict[str, Any]]) ->
         lat = to_float(attrs.get("lat"))
         lon = to_float(attrs.get("lon"))
         if lat is None:
-            y = geom.get("y")
-            lat = to_float(y)
+            lat = to_float(geom.get("y"))
         if lon is None:
-            x = geom.get("x")
-            lon = to_float(x)
+            lon = to_float(geom.get("x"))
 
-        before = conn.total_changes
-        conn.execute(
-            """
-            INSERT INTO raw_events (
-                objectid, code, event_ts_utc, event_ts_local, event_date_local, event_time_local,
-                fecha_ms, fechaevento_ms, hora, lat, lon, magnitud, prof, profundidad, intensidad,
-                departamento, referencia, ultimo, reporte, mag, raw_attributes_json, raw_geometry_json,
-                ingested_at_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(objectid) DO UPDATE SET
-                code=excluded.code,
-                event_ts_utc=excluded.event_ts_utc,
-                event_ts_local=excluded.event_ts_local,
-                event_date_local=excluded.event_date_local,
-                event_time_local=excluded.event_time_local,
-                fecha_ms=excluded.fecha_ms,
-                fechaevento_ms=excluded.fechaevento_ms,
-                hora=excluded.hora,
-                lat=excluded.lat,
-                lon=excluded.lon,
-                magnitud=excluded.magnitud,
-                prof=excluded.prof,
-                profundidad=excluded.profundidad,
-                intensidad=excluded.intensidad,
-                departamento=excluded.departamento,
-                referencia=excluded.referencia,
-                ultimo=excluded.ultimo,
-                reporte=excluded.reporte,
-                mag=excluded.mag,
-                raw_attributes_json=excluded.raw_attributes_json,
-                raw_geometry_json=excluded.raw_geometry_json,
-                ingested_at_utc=excluded.ingested_at_utc
-            """,
-            (
-                objectid,
-                attrs.get("code"),
-                event_ts_utc,
-                event_ts_local,
-                event_date_local,
-                event_time_local,
-                fecha_ms_int,
-                fechaevento_ms_int,
-                hora_text,
-                lat,
-                lon,
-                to_float(attrs.get("magnitud")),
-                to_int(attrs.get("prof")),
-                attrs.get("profundidad"),
-                attrs.get("int_"),
-                attrs.get("departamento"),
-                attrs.get("ref"),
-                to_int(attrs.get("ultimo")),
-                to_int(attrs.get("reporte")),
-                to_float(attrs.get("mag")),
-                json.dumps(attrs, ensure_ascii=True, sort_keys=True),
-                json.dumps(geom, ensure_ascii=True, sort_keys=True),
-                now_iso,
-            ),
+        changed = upsert_raw_event(
+            conn,
+            objectid=objectid,
+            code=attrs.get("code"),
+            event_ts_utc=event_ts_utc,
+            event_ts_local=event_ts_local,
+            event_date_local=event_date_local,
+            event_time_local=event_time_local,
+            fecha_ms=fecha_ms_int,
+            fechaevento_ms=fechaevento_ms_int,
+            hora=hora_text,
+            lat=lat,
+            lon=lon,
+            magnitud=to_float(attrs.get("magnitud")),
+            prof=to_int(attrs.get("prof")),
+            profundidad=attrs.get("profundidad"),
+            intensidad=attrs.get("int_"),
+            departamento=attrs.get("departamento"),
+            referencia=attrs.get("ref"),
+            ultimo=to_int(attrs.get("ultimo")),
+            reporte=to_int(attrs.get("reporte")),
+            mag=to_float(attrs.get("mag")),
+            raw_attributes=attrs,
+            raw_geometry=geom,
+            ingested_at_utc=now_iso,
         )
-        after = conn.total_changes
-        if after > before:
+        if changed:
             inserted_rows += 1
         if objectid > latest_objectid:
             latest_objectid = objectid
 
     conn.commit()
     return inserted_rows, latest_objectid
+
+
+def should_refresh_historical(
+    state: dict[str, Any],
+    source: str,
+    refresh_hours: int,
+    force_refresh: bool,
+) -> bool:
+    if force_refresh:
+        return True
+
+    if str(state.get("historical_source", "")) != source:
+        return True
+
+    last_refresh = iso_to_utc_datetime(str(state.get("historical_last_refresh_utc", "")))
+    if last_refresh is None:
+        return True
+
+    age_seconds = (datetime.now(timezone.utc) - last_refresh).total_seconds()
+    return age_seconds >= max(refresh_hours, 1) * 3600
+
+
+def import_historical_csv(
+    conn: sqlite3.Connection,
+    state: dict[str, Any],
+    source: str | None,
+    timeout_seconds: int,
+    insecure_skip_verify: bool,
+    refresh_hours: int,
+    force_refresh: bool,
+) -> tuple[int, bool]:
+    if source is None:
+        return 0, False
+
+    source = source.strip()
+    if not source:
+        return 0, False
+
+    if not should_refresh_historical(
+        state=state,
+        source=source,
+        refresh_hours=refresh_hours,
+        force_refresh=force_refresh,
+    ):
+        return 0, False
+
+    text = read_text_source(
+        source=source,
+        timeout_seconds=timeout_seconds,
+        insecure_skip_verify=insecure_skip_verify,
+    )
+    try:
+        dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    if not reader.fieldnames:
+        raise RuntimeError("Historical CSV has no header row.")
+
+    inserted_rows = 0
+    now_iso = utc_now_iso()
+
+    for raw_row in reader:
+        if not isinstance(raw_row, dict):
+            continue
+        row = {str(k).strip(): v for k, v in raw_row.items() if k is not None}
+        key_map = build_row_key_map(row)
+
+        code = pick_row_value(row, key_map, ["code", "codigo", "src_code"])
+        source_objectid = to_int(
+            pick_row_value(row, key_map, ["objectid", "id", "oid", "src_objectid"])
+        )
+
+        fecha_ms_int = to_int(pick_row_value(row, key_map, ["fecha_ms", "fecha", "src_fecha"]))
+        fechaevento_ms_int = to_int(
+            pick_row_value(
+                row,
+                key_map,
+                ["fechaevento_ms", "fechaevento", "src_fechaevento"],
+            )
+        )
+        hora_value = pick_row_value(row, key_map, ["hora", "event_time_local", "src_hora"])
+        hora_text = str(hora_value) if hora_value is not None else None
+
+        event_ts_utc = parse_datetime_to_utc_iso(
+            pick_row_value(row, key_map, ["event_ts_utc", "timestamp_utc", "utc_datetime"]),
+            assume_tz=timezone.utc,
+        )
+        if event_ts_utc is None:
+            event_ts_utc = parse_datetime_to_utc_iso(
+                pick_row_value(row, key_map, ["event_ts_local", "event_ts_et", "timestamp_local"]),
+                assume_tz=LOCAL_TZ,
+            )
+        if event_ts_utc is None:
+            event_ts_utc, _, _, _ = parse_event_times(
+                fechaevento_ms=fechaevento_ms_int,
+                fecha_ms=fecha_ms_int,
+                hora=hora_text,
+            )
+
+        event_ts_local, event_date_local, event_time_local = iso_utc_to_zone_fields(
+            event_ts_utc, LOCAL_TZ
+        )
+
+        lat = to_float(pick_row_value(row, key_map, ["lat", "latitude", "src_lat", "y"]))
+        lon = to_float(
+            pick_row_value(row, key_map, ["lon", "lng", "longitude", "src_lon", "x"])
+        )
+        magnitud = to_float(
+            pick_row_value(row, key_map, ["magnitud", "magnitude", "src_magnitud", "src_mag", "mag"])
+        )
+        prof = to_int(pick_row_value(row, key_map, ["prof", "depth", "src_prof"]))
+        profundidad = pick_row_value(row, key_map, ["profundidad", "src_profundidad"])
+        intensidad = pick_row_value(row, key_map, ["intensidad", "int_", "src_int_"])
+        departamento = pick_row_value(row, key_map, ["departamento", "src_departamento"])
+        referencia = pick_row_value(row, key_map, ["referencia", "ref", "src_ref"])
+        ultimo = to_int(pick_row_value(row, key_map, ["ultimo", "src_ultimo"]))
+        reporte = to_int(pick_row_value(row, key_map, ["reporte", "src_reporte"]))
+        mag = to_float(pick_row_value(row, key_map, ["mag", "src_mag"]))
+        if mag is None:
+            mag = magnitud
+
+        seed = "|".join(
+            [
+                str(source),
+                str(source_objectid if source_objectid is not None else ""),
+                str(code or ""),
+                str(event_ts_utc or ""),
+                str(lat if lat is not None else ""),
+                str(lon if lon is not None else ""),
+                str(magnitud if magnitud is not None else ""),
+                str(prof if prof is not None else ""),
+            ]
+        )
+        # Keep historical rows in a separate objectid namespace to avoid collisions with live ArcGIS objectid.
+        objectid = stable_synthetic_objectid(seed)
+
+        geom_payload: dict[str, Any] = {}
+        if lat is not None and lon is not None:
+            geom_payload = {"x": lon, "y": lat}
+
+        attrs_payload = {k: v for k, v in row.items()}
+        attrs_payload["source_type"] = "historical_csv"
+        attrs_payload["source_ref"] = source
+
+        changed = upsert_raw_event(
+            conn,
+            objectid=objectid,
+            code=code,
+            event_ts_utc=event_ts_utc,
+            event_ts_local=event_ts_local,
+            event_date_local=event_date_local,
+            event_time_local=event_time_local,
+            fecha_ms=fecha_ms_int,
+            fechaevento_ms=fechaevento_ms_int,
+            hora=hora_text,
+            lat=lat,
+            lon=lon,
+            magnitud=magnitud,
+            prof=prof,
+            profundidad=profundidad,
+            intensidad=intensidad,
+            departamento=departamento,
+            referencia=referencia,
+            ultimo=ultimo,
+            reporte=reporte,
+            mag=mag,
+            raw_attributes=attrs_payload,
+            raw_geometry=geom_payload,
+            ingested_at_utc=now_iso,
+        )
+        if changed:
+            inserted_rows += 1
+
+    conn.commit()
+    state["historical_source"] = source
+    state["historical_last_refresh_utc"] = utc_now_iso()
+    return inserted_rows, True
 
 
 def export_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
@@ -677,7 +1040,7 @@ def export_curated_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
             reporte,
             ingested_at_utc
         FROM raw_events
-        ORDER BY objectid DESC
+        ORDER BY event_ts_utc DESC, objectid DESC
         """
     ).fetchall()
 
@@ -705,7 +1068,25 @@ def export_curated_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
     with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         writer.writeheader()
+        seen_keys: set[tuple[Any, ...]] = set()
+        exported_rows = 0
         for row in rows:
+            code_value = str(row["code"]).strip() if row["code"] is not None else ""
+            if code_value:
+                dedupe_key: tuple[Any, ...] = ("code", code_value.upper())
+            else:
+                dedupe_key = (
+                    "fallback",
+                    row["event_ts_utc"],
+                    row["lat"],
+                    row["lon"],
+                    row["magnitud"],
+                    row["prof"],
+                )
+            if dedupe_key in seen_keys:
+                continue
+            seen_keys.add(dedupe_key)
+
             event_ts_et, event_date_et, event_time_et = iso_utc_to_zone_fields(
                 row["event_ts_utc"], ET_TZ
             )
@@ -730,7 +1111,8 @@ def export_curated_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
                     "ingested_at_utc": row["ingested_at_utc"],
                 }
             )
-    return len(rows)
+            exported_rows += 1
+    return exported_rows
 
 
 def export_geojson(conn: sqlite3.Connection, geojson_path: Path) -> None:
@@ -795,6 +1177,10 @@ def run_once(
     batch_size: int,
     timeout_seconds: int,
     insecure_skip_verify: bool,
+    historical_source: str | None,
+    historical_refresh_hours: int,
+    force_historical_refresh: bool,
+    skip_live_fetch: bool,
 ) -> RunSummary:
     state = load_state(state_path)
     last_objectid = int(state.get("last_objectid", 0))
@@ -812,22 +1198,41 @@ def run_once(
         if count_rows(conn) == 0 and last_objectid > 0:
             last_objectid = 0
 
-        metadata = fetch_layer_metadata(
-            timeout_seconds=timeout_seconds,
-            insecure_skip_verify=insecure_skip_verify,
-        )
-        new_fields = sync_schema_metadata(conn, metadata, known_fields)
+        if skip_live_fetch:
+            new_fields = []
+        else:
+            metadata = fetch_layer_metadata(
+                timeout_seconds=timeout_seconds,
+                insecure_skip_verify=insecure_skip_verify,
+            )
+            new_fields = sync_schema_metadata(conn, metadata, known_fields)
 
-        features = fetch_new_features(
-            last_objectid=last_objectid,
-            batch_size=batch_size,
+        historical_rows, historical_refreshed = import_historical_csv(
+            conn=conn,
+            state=state,
+            source=historical_source,
             timeout_seconds=timeout_seconds,
             insecure_skip_verify=insecure_skip_verify,
+            refresh_hours=historical_refresh_hours,
+            force_refresh=force_historical_refresh,
         )
-        upsert_count, latest_seen = upsert_features(conn, features)
+
+        if skip_live_fetch:
+            upsert_count, latest_seen = 0, last_objectid
+        else:
+            features = fetch_new_features(
+                last_objectid=last_objectid,
+                batch_size=batch_size,
+                timeout_seconds=timeout_seconds,
+                insecure_skip_verify=insecure_skip_verify,
+            )
+            upsert_count, latest_seen = upsert_features(conn, features)
 
         if latest_seen > last_objectid:
             state["last_objectid"] = latest_seen
+        if historical_refreshed:
+            last_hist_et, _, _ = iso_utc_to_zone_fields(state["historical_last_refresh_utc"], ET_TZ)
+            state["historical_last_refresh_et"] = last_hist_et
         state["known_fields"] = known_fields
         state["last_run_utc"] = utc_now_iso()
         last_run_et, _, _ = iso_utc_to_zone_fields(state["last_run_utc"], ET_TZ)
@@ -843,6 +1248,7 @@ def run_once(
 
         return RunSummary(
             new_rows=upsert_count,
+            historical_rows=historical_rows,
             latest_objectid=int(state["last_objectid"]),
             total_rows=count_rows(conn),
             new_fields=new_fields,
@@ -855,6 +1261,13 @@ def run_once(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    historical_refresh_default = 24
+    env_refresh = os.getenv("IGP_HISTORICAL_REFRESH_HOURS", "").strip()
+    if env_refresh:
+        parsed_refresh = to_int(env_refresh)
+        if parsed_refresh is not None and parsed_refresh > 0:
+            historical_refresh_default = parsed_refresh
+
     parser = argparse.ArgumentParser(
         description="Stream IGP seismic data into SQLite + BI-friendly CSV/GeoJSON."
     )
@@ -889,6 +1302,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="HTTP timeout for ArcGIS requests.",
     )
     parser.add_argument(
+        "--historical-source",
+        type=str,
+        default=os.getenv("IGP_HISTORICAL_SOURCE_URL"),
+        help=(
+            "Optional URL or local CSV path for historical backfill. "
+            "If omitted, only live API rows are ingested."
+        ),
+    )
+    parser.add_argument(
+        "--historical-refresh-hours",
+        type=int,
+        default=historical_refresh_default,
+        help=(
+            "How often to refresh historical source (hours). "
+            "Used only when --historical-source is set."
+        ),
+    )
+    parser.add_argument(
+        "--force-historical-refresh",
+        action="store_true",
+        help="Refresh historical source now, ignoring last historical refresh timestamp.",
+    )
+    parser.add_argument(
+        "--skip-live-fetch",
+        action="store_true",
+        help="Skip live ArcGIS fetch (useful for testing historical ingestion only).",
+    )
+    parser.add_argument(
         "--loop",
         action="store_true",
         help="Run continuously. Without this flag, script runs once and exits.",
@@ -915,6 +1356,8 @@ def main() -> int:
         parser.error("--batch-size must be between 1 and 2000.")
     if args.interval_seconds < 5:
         parser.error("--interval-seconds must be at least 5.")
+    if args.historical_refresh_hours < 1:
+        parser.error("--historical-refresh-hours must be at least 1.")
 
     while True:
         try:
@@ -925,6 +1368,10 @@ def main() -> int:
                 batch_size=args.batch_size,
                 timeout_seconds=args.timeout_seconds,
                 insecure_skip_verify=args.insecure_skip_verify,
+                historical_source=args.historical_source,
+                historical_refresh_hours=args.historical_refresh_hours,
+                force_historical_refresh=args.force_historical_refresh,
+                skip_live_fetch=args.skip_live_fetch,
             )
             now_utc = utc_now_iso()
             now_et, _, _ = iso_utc_to_zone_fields(now_utc, ET_TZ)
@@ -933,6 +1380,7 @@ def main() -> int:
                     {
                         "status": "ok",
                         "new_rows": summary.new_rows,
+                        "historical_rows": summary.historical_rows,
                         "latest_objectid": summary.latest_objectid,
                         "total_rows": summary.total_rows,
                         "new_fields": summary.new_fields,
@@ -941,6 +1389,7 @@ def main() -> int:
                         "geojson": str(summary.geojson_path),
                         "run_at_utc": now_utc,
                         "run_at_et": now_et,
+                        "historical_source": args.historical_source,
                     }
                 )
             )

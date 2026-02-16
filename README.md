@@ -8,13 +8,18 @@
 
 ## Overview
 
-This project implements a cloud-automated data ingestion pipeline that continuously pulls public seismic data from the official IGP (Instituto Geofísico del Perú) ArcGIS REST service and publishes BI-ready datasets for visualization tools such as Tableau and Power BI.
+This project implements a cloud-automated data ingestion pipeline that continuously pulls public seismic data from the official IGP (Instituto Geofisico del Peru) ArcGIS REST service and publishes BI-ready datasets for visualization tools such as Tableau and Power BI.
 
 The objective is to maintain a reliable, incremental, schema-aware public data feed suitable for real-time dashboards and analytics.
 
 **Official public data source:**
 
 https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/MapServer/0
+
+Important data scope note:
+
+- The live ArcGIS layer is near-real-time and may expose only recent/year-to-date events.
+- For multi-year history, configure an additional historical CSV source. The pipeline can merge historical + live rows automatically.
 
 This repository does NOT host private data.
 It consumes publicly available government data and republishes structured derivatives for analytics purposes.
@@ -43,12 +48,13 @@ The pipeline consumes an official ArcGIS REST endpoint and republishes structure
 ## What the Pipeline Does
 
 - Incrementally pulls new seismic events using `objectid`
+- Optionally imports historical CSV data and merges it with the live feed
 - Stores full history in SQLite (`raw_events` table)
 - Preserves full raw attributes JSON for auditability
 - Detects ArcGIS schema changes via metadata inspection
 - Regenerates export files on every run:
   - `earthquakes_live.csv` (full flat feed)
-  - `earthquakes_live_curated.csv` (recommended BI feed)
+  - `earthquakes_live_curated.csv` (recommended BI feed, de-duplicated by event code)
   - `earthquakes_live.geojson` (map feed)
 - Includes standardized timestamps:
   - `event_ts_utc`
@@ -95,6 +101,13 @@ If TLS CA issues occur:
 python3 seismic_bi_stream/igp_seismic_stream.py --insecure-skip-verify
 ```
 
+Run once with historical source:
+
+```bash
+python3 seismic_bi_stream/igp_seismic_stream.py \
+  --historical-source "https://example.com/igp_historical.csv"
+```
+
 Run continuously (development mode only):
 
 ```bash
@@ -122,6 +135,18 @@ The repository includes:
 - Updates `state.json`
 
 No local machine is required for updates.
+
+### Enable full history in GitHub Actions
+
+In GitHub:
+
+1. `Settings` -> `Secrets and variables` -> `Actions` -> `Variables`
+2. Add `IGP_HISTORICAL_SOURCE_URL` = `<public historical CSV URL>`
+3. Optional: add `IGP_HISTORICAL_REFRESH_HOURS` = `24`
+4. Run `Refresh IGP Seismic Feed` once manually
+5. Verify `earthquakes_live_curated.csv` includes older years
+
+If `IGP_HISTORICAL_SOURCE_URL` is empty, the workflow runs live-only mode.
 
 ---
 
@@ -156,88 +181,62 @@ Generated files:
 - `seismic_bi_stream/exports/earthquakes_live_curated.csv`
 - `seismic_bi_stream/exports/earthquakes_live.geojson`
 
-Recommended BI feed (clean dataset):
+Recommended BI feed (clean and de-duplicated):
 
-`earthquakes_live_curated.csv`
+https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live_curated.csv
 
 ---
 
 ## Connecting to Tableau
 
-1. Connect → Text File
+1. Connect -> Text File
 2. Select `earthquakes_live_curated.csv`
 3. Assign geospatial roles:
-   - `lat` → Latitude
-   - `lon` → Longitude
+   - `lat` -> Latitude
+   - `lon` -> Longitude
 4. Use `event_ts_et` for time axis
 
-If using public URL hosting, use Web Data Connector refresh.
+If using public URL hosting, use text/web-hosted CSV refresh options available in your Tableau environment.
 
 ---
 
 ## Connecting to Power BI
 
-1. Get Data → Text/CSV
+1. Get Data -> Text/CSV (or Web for raw GitHub URL)
 2. Select curated CSV
 3. Set `lat` / `lon` data categories
 4. Publish to Power BI Service
-5. Enable scheduled refresh (web source if hosted publicly)
+5. Enable scheduled refresh
 
 ---
 
 # 🇪🇸 Español
 
-## Descripción General
+## Descripcion General
 
-Este proyecto implementa un pipeline automatizado en la nube que consume datos sísmicos públicos desde el servicio oficial ArcGIS REST del IGP (Instituto Geofísico del Perú) y publica datasets estructurados listos para herramientas de Business Intelligence como Tableau y Power BI.
+Este proyecto implementa un pipeline automatizado en la nube que consume datos sismicos publicos desde el servicio oficial ArcGIS REST del IGP y publica datasets estructurados listos para Tableau y Power BI.
 
-El objetivo es mantener un flujo de datos incremental, confiable y resistente a cambios de esquema, apto para dashboards en tiempo real.
-
-Fuente oficial pública:
+Fuente oficial publica:
 
 https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/MapServer/0
 
-Este repositorio:
+Nota de alcance:
 
-- No contiene datos privados
-- No expone credenciales
-- No almacena información personal
-- Solo transforma y republica datos públicos
+- La capa ArcGIS en vivo puede incluir solo eventos recientes/del ano en curso.
+- Para historial completo, configure una fuente CSV historica y el pipeline hara merge con el feed en vivo.
 
 ---
 
-## Qué Hace el Pipeline
+## Que Hace el Pipeline
 
-- Descarga eventos sísmicos incrementalmente usando `objectid`
+- Descarga eventos sismicos incrementalmente usando `objectid`
+- Puede importar un CSV historico y combinarlo con el feed en vivo
 - Guarda historial en SQLite (`raw_events`)
 - Preserva atributos originales en JSON
 - Detecta cambios en el esquema del ArcGIS
-- Regenera en cada ejecución:
+- Regenera:
   - `earthquakes_live.csv`
   - `earthquakes_live_curated.csv`
   - `earthquakes_live.geojson`
-- Incluye timestamps estandarizados:
-  - `event_ts_utc`
-  - `event_ts_et`
-  - `event_date_et`
-  - `event_time_et`
-- Si la fuente agrega un nuevo campo, se refleja automáticamente como `src_<campo>`
 
----
-
-## Automatización y Monitoreo
-
-Incluye:
-
-- `igp-seismic-refresh.yml`
-- `igp-seismic-stale-alert.yml`
-
-El sistema:
-
-- Ejecuta el pipeline automáticamente
-- Actualiza exportaciones
-- Monitorea el estado del feed
-- Abre y cierra alertas automáticamente si detecta interrupciones
-
-No se requiere que una computadora local esté encendida.
-
+No se requiere que una computadora local este encendida cuando GitHub Actions esta activo.
