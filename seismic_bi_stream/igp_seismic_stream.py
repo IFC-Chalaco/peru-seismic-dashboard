@@ -42,6 +42,47 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def to_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            if "." in raw:
+                parsed = float(raw)
+                return int(parsed) if parsed.is_integer() else None
+            return int(raw)
+        except ValueError:
+            return None
+    return None
+
+
+def to_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return float(int(value))
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            return float(raw.replace(",", "."))
+        except ValueError:
+            return None
+    return None
+
+
 def iso_utc_to_zone_fields(
     iso_utc: str | None, tz: ZoneInfo
 ) -> tuple[str | None, str | None, str | None]:
@@ -114,9 +155,9 @@ def init_db(conn: sqlite3.Connection) -> None:
             intensidad TEXT,
             departamento TEXT,
             referencia TEXT,
-            ultimo TEXT,
+            ultimo INTEGER,
             reporte INTEGER,
-            mag TEXT,
+            mag REAL,
             raw_attributes_json TEXT NOT NULL,
             raw_geometry_json TEXT,
             ingested_at_utc TEXT NOT NULL
@@ -142,7 +183,112 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    migrate_raw_events_column_types(conn)
     conn.commit()
+
+
+def migrate_raw_events_column_types(conn: sqlite3.Connection) -> None:
+    current_types = {
+        str(row[1]): str(row[2]).upper()
+        for row in conn.execute("PRAGMA table_info(raw_events)")
+    }
+    if not current_types:
+        return
+
+    if current_types.get("ultimo") == "INTEGER" and current_types.get("mag") == "REAL":
+        return
+
+    original_row_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """
+        SELECT
+            objectid, code, event_ts_utc, event_ts_local, event_date_local, event_time_local,
+            fecha_ms, fechaevento_ms, hora, lat, lon, magnitud, prof, profundidad, intensidad,
+            departamento, referencia, ultimo, reporte, mag, raw_attributes_json, raw_geometry_json,
+            ingested_at_utc
+        FROM raw_events
+        """
+    ).fetchall()
+    conn.row_factory = original_row_factory
+
+    conn.executescript(
+        """
+        DROP TABLE IF EXISTS raw_events_v2;
+        CREATE TABLE raw_events_v2 (
+            objectid INTEGER PRIMARY KEY,
+            code TEXT,
+            event_ts_utc TEXT,
+            event_ts_local TEXT,
+            event_date_local TEXT,
+            event_time_local TEXT,
+            fecha_ms INTEGER,
+            fechaevento_ms INTEGER,
+            hora TEXT,
+            lat REAL,
+            lon REAL,
+            magnitud REAL,
+            prof INTEGER,
+            profundidad TEXT,
+            intensidad TEXT,
+            departamento TEXT,
+            referencia TEXT,
+            ultimo INTEGER,
+            reporte INTEGER,
+            mag REAL,
+            raw_attributes_json TEXT NOT NULL,
+            raw_geometry_json TEXT,
+            ingested_at_utc TEXT NOT NULL
+        );
+        """
+    )
+
+    insert_sql = """
+        INSERT INTO raw_events_v2 (
+            objectid, code, event_ts_utc, event_ts_local, event_date_local, event_time_local,
+            fecha_ms, fechaevento_ms, hora, lat, lon, magnitud, prof, profundidad, intensidad,
+            departamento, referencia, ultimo, reporte, mag, raw_attributes_json, raw_geometry_json,
+            ingested_at_utc
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    for row in rows:
+        conn.execute(
+            insert_sql,
+            (
+                row["objectid"],
+                row["code"],
+                row["event_ts_utc"],
+                row["event_ts_local"],
+                row["event_date_local"],
+                row["event_time_local"],
+                to_int(row["fecha_ms"]),
+                to_int(row["fechaevento_ms"]),
+                row["hora"],
+                to_float(row["lat"]),
+                to_float(row["lon"]),
+                to_float(row["magnitud"]),
+                to_int(row["prof"]),
+                row["profundidad"],
+                row["intensidad"],
+                row["departamento"],
+                row["referencia"],
+                to_int(row["ultimo"]),
+                to_int(row["reporte"]),
+                to_float(row["mag"]),
+                row["raw_attributes_json"],
+                row["raw_geometry_json"],
+                row["ingested_at_utc"],
+            ),
+        )
+
+    conn.executescript(
+        """
+        DROP TABLE raw_events;
+        ALTER TABLE raw_events_v2 RENAME TO raw_events;
+        CREATE INDEX IF NOT EXISTS idx_raw_events_code ON raw_events(code);
+        CREATE INDEX IF NOT EXISTS idx_raw_events_event_ts ON raw_events(event_ts_utc);
+        """
+    )
 
 
 def parse_event_times(
@@ -314,8 +460,8 @@ def upsert_features(conn: sqlite3.Connection, features: list[dict[str, Any]]) ->
         if not isinstance(attrs, dict):
             continue
 
-        objectid = attrs.get("objectid")
-        if not isinstance(objectid, int):
+        objectid = to_int(attrs.get("objectid"))
+        if objectid is None:
             continue
 
         geom = feature.get("geometry")
@@ -325,20 +471,23 @@ def upsert_features(conn: sqlite3.Connection, features: list[dict[str, Any]]) ->
         fecha_ms = attrs.get("fecha")
         fechaevento_ms = attrs.get("fechaevento")
         hora = attrs.get("hora")
+        fecha_ms_int = to_int(fecha_ms)
+        fechaevento_ms_int = to_int(fechaevento_ms)
+        hora_text = str(hora) if hora is not None else None
         event_ts_utc, event_ts_local, event_date_local, event_time_local = parse_event_times(
-            fechaevento_ms=fechaevento_ms if isinstance(fechaevento_ms, (int, float)) else None,
-            fecha_ms=fecha_ms if isinstance(fecha_ms, (int, float)) else None,
-            hora=hora if isinstance(hora, str) else None,
+            fechaevento_ms=fechaevento_ms_int,
+            fecha_ms=fecha_ms_int,
+            hora=hora_text,
         )
 
-        lat = attrs.get("lat")
-        lon = attrs.get("lon")
-        if not isinstance(lat, (int, float)):
+        lat = to_float(attrs.get("lat"))
+        lon = to_float(attrs.get("lon"))
+        if lat is None:
             y = geom.get("y")
-            lat = float(y) if isinstance(y, (int, float)) else None
-        if not isinstance(lon, (int, float)):
+            lat = to_float(y)
+        if lon is None:
             x = geom.get("x")
-            lon = float(x) if isinstance(x, (int, float)) else None
+            lon = to_float(x)
 
         before = conn.total_changes
         conn.execute(
@@ -380,20 +529,20 @@ def upsert_features(conn: sqlite3.Connection, features: list[dict[str, Any]]) ->
                 event_ts_local,
                 event_date_local,
                 event_time_local,
-                int(fecha_ms) if isinstance(fecha_ms, (int, float)) else None,
-                int(fechaevento_ms) if isinstance(fechaevento_ms, (int, float)) else None,
-                attrs.get("hora"),
-                float(lat) if isinstance(lat, (int, float)) else None,
-                float(lon) if isinstance(lon, (int, float)) else None,
-                float(attrs["magnitud"]) if isinstance(attrs.get("magnitud"), (int, float)) else None,
-                int(attrs["prof"]) if isinstance(attrs.get("prof"), int) else None,
+                fecha_ms_int,
+                fechaevento_ms_int,
+                hora_text,
+                lat,
+                lon,
+                to_float(attrs.get("magnitud")),
+                to_int(attrs.get("prof")),
                 attrs.get("profundidad"),
                 attrs.get("int_"),
                 attrs.get("departamento"),
                 attrs.get("ref"),
-                attrs.get("ultimo"),
-                int(attrs["reporte"]) if isinstance(attrs.get("reporte"), int) else None,
-                attrs.get("mag"),
+                to_int(attrs.get("ultimo")),
+                to_int(attrs.get("reporte")),
+                to_float(attrs.get("mag")),
                 json.dumps(attrs, ensure_ascii=True, sort_keys=True),
                 json.dumps(geom, ensure_ascii=True, sort_keys=True),
                 now_iso,
