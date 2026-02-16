@@ -19,7 +19,7 @@ https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/Map
 Important data scope note:
 
 - The live ArcGIS layer is near-real-time and may expose only recent/year-to-date events.
-- For multi-year history, configure an additional historical CSV source. The pipeline can merge historical + live rows automatically.
+- For multi-year history, configure an additional historical CSV/XLSX source. The pipeline can merge historical + live rows automatically.
 
 This repository does NOT host private data.
 It consumes publicly available government data and republishes structured derivatives for analytics purposes.
@@ -48,7 +48,7 @@ The pipeline consumes an official ArcGIS REST endpoint and republishes structure
 ## What the Pipeline Does
 
 - Incrementally pulls new seismic events using `objectid`
-- Optionally imports historical CSV data and merges it with the live feed
+- Optionally imports historical CSV/XLSX data and merges it with the live feed
 - Stores full history in SQLite (`raw_events` table)
 - Preserves full raw attributes JSON for auditability
 - Detects ArcGIS schema changes via metadata inspection
@@ -105,7 +105,7 @@ Run once with historical source:
 
 ```bash
 python3 seismic_bi_stream/igp_seismic_stream.py \
-  --historical-source "https://example.com/igp_historical.csv"
+  --historical-source "https://example.com/igp_historical.xlsx"
 ```
 
 Run continuously (development mode only):
@@ -141,12 +141,16 @@ No local machine is required for updates.
 In GitHub:
 
 1. `Settings` -> `Secrets and variables` -> `Actions` -> `Variables`
-2. Add `IGP_HISTORICAL_SOURCE_URL` = `<public historical CSV URL>`
+2. Add `IGP_HISTORICAL_SOURCE_URL` = `<public historical CSV/XLSX URL>`
 3. Optional: add `IGP_HISTORICAL_REFRESH_HOURS` = `24`
 4. Run `Refresh IGP Seismic Feed` once manually
 5. Verify `earthquakes_live_curated.csv` includes older years
 
 If `IGP_HISTORICAL_SOURCE_URL` is empty, the workflow runs live-only mode.
+
+Example official historical source:
+
+`https://www.datosabiertos.gob.pe/sites/default/files/Catalogo1960_2023.xlsx`
 
 ---
 

@@ -9,18 +9,21 @@ import hashlib
 import io
 import json
 import os
+import posixpath
 import re
 import ssl
 import sqlite3
 import sys
 import time
 import traceback
+import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlparse, urlencode
 from urllib.request import Request, urlopen
+from xml.etree import ElementTree as ET
 from zoneinfo import ZoneInfo
 
 ARC_LAYER_URL = (
@@ -92,6 +95,13 @@ def to_float(value: Any) -> float | None:
         except ValueError:
             return None
     return None
+
+
+def to_epoch_ms(value: Any) -> int | None:
+    parsed = to_int(value)
+    if parsed is None:
+        return None
+    return parsed if abs(parsed) >= 100000000000 else None
 
 
 def normalize_key(value: Any) -> str:
@@ -179,6 +189,21 @@ def parse_datetime_to_utc_iso(value: Any, assume_tz: ZoneInfo | timezone | None 
     return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def parse_excel_serial_to_utc_iso(
+    value: Any,
+    assume_tz: ZoneInfo | timezone | None = None,
+) -> str | None:
+    serial = to_float(value)
+    if serial is None:
+        return None
+    if serial < 20000 or serial > 90000:
+        return None
+
+    tz = assume_tz or timezone.utc
+    local_dt = datetime(1899, 12, 30, tzinfo=tz) + timedelta(days=serial)
+    return local_dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def decode_text(raw: bytes) -> str:
     for encoding in ("utf-8-sig", "utf-8", "latin-1"):
         try:
@@ -188,7 +213,7 @@ def decode_text(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def read_text_source(source: str, timeout_seconds: int, insecure_skip_verify: bool) -> str:
+def read_source_bytes(source: str, timeout_seconds: int, insecure_skip_verify: bool) -> bytes:
     if source.startswith("http://") or source.startswith("https://"):
         req = Request(source, headers={"User-Agent": "igp-seismic-stream/1.0"})
         ssl_context = ssl.create_default_context()
@@ -196,12 +221,207 @@ def read_text_source(source: str, timeout_seconds: int, insecure_skip_verify: bo
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
         with urlopen(req, timeout=timeout_seconds, context=ssl_context) as response:
-            raw = response.read()
-        return decode_text(raw)
+            return response.read()
 
     path = Path(source).expanduser()
-    raw = path.read_bytes()
-    return decode_text(raw)
+    return path.read_bytes()
+
+
+def read_text_source(source: str, timeout_seconds: int, insecure_skip_verify: bool) -> str:
+    return decode_text(
+        read_source_bytes(
+            source=source,
+            timeout_seconds=timeout_seconds,
+            insecure_skip_verify=insecure_skip_verify,
+        )
+    )
+
+
+def detect_historical_format(source: str, raw: bytes) -> str:
+    parsed = urlparse(source)
+    source_path = parsed.path if parsed.scheme else source
+    suffix = Path(source_path).suffix.lower()
+    if suffix in {".xlsx", ".xlsm"}:
+        return "xlsx"
+    if suffix in {".csv", ".txt"}:
+        return "csv"
+    if raw.startswith(b"PK"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                if "xl/workbook.xml" in set(zf.namelist()):
+                    return "xlsx"
+        except zipfile.BadZipFile:
+            pass
+    return "csv"
+
+
+def normalize_header_name(value: Any, idx: int, used: set[str]) -> str:
+    base = str(value).strip() if value is not None else ""
+    if not base:
+        base = f"column_{idx + 1}"
+    name = base
+    counter = 2
+    while name in used:
+        name = f"{base}_{counter}"
+        counter += 1
+    used.add(name)
+    return name
+
+
+def parse_csv_rows(text: str) -> list[dict[str, Any]]:
+    try:
+        dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    if not reader.fieldnames:
+        raise RuntimeError("Historical table has no header row.")
+    return [
+        {str(k).strip(): v for k, v in row.items() if k is not None}
+        for row in reader
+        if isinstance(row, dict)
+    ]
+
+
+def xlsx_col_to_index(cell_ref: str) -> int | None:
+    letters = "".join(ch for ch in cell_ref if ch.isalpha()).upper()
+    if not letters:
+        return None
+    index = 0
+    for ch in letters:
+        if ch < "A" or ch > "Z":
+            return None
+        index = index * 26 + (ord(ch) - ord("A") + 1)
+    return index - 1
+
+
+def xlsx_cell_value(cell: ET.Element, shared_strings: list[str], ns_main: str) -> str | None:
+    cell_type = cell.attrib.get("t")
+    if cell_type == "inlineStr":
+        inline = cell.find(f"{{{ns_main}}}is")
+        if inline is None:
+            return None
+        return "".join(inline.itertext()) or None
+
+    value_elem = cell.find(f"{{{ns_main}}}v")
+    if value_elem is None or value_elem.text is None:
+        return None
+    raw_value = value_elem.text
+
+    if cell_type == "s":
+        idx = to_int(raw_value)
+        if idx is None or idx < 0 or idx >= len(shared_strings):
+            return None
+        return shared_strings[idx]
+    if cell_type == "b":
+        return "1" if raw_value.strip() == "1" else "0"
+    return raw_value
+
+
+def parse_xlsx_rows(raw: bytes) -> list[dict[str, Any]]:
+    ns_main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    ns_doc_rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    ns_pkg_rel = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+        workbook_xml = ET.fromstring(zf.read("xl/workbook.xml"))
+        first_sheet = workbook_xml.find(f".//{{{ns_main}}}sheets/{{{ns_main}}}sheet")
+        if first_sheet is None:
+            raise RuntimeError("Historical XLSX has no sheets.")
+        sheet_rel_id = first_sheet.attrib.get(f"{{{ns_doc_rel}}}id")
+        if not sheet_rel_id:
+            raise RuntimeError("Historical XLSX sheet relationship id not found.")
+
+        rels_xml = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+        sheet_target: str | None = None
+        for rel in rels_xml.findall(f"{{{ns_pkg_rel}}}Relationship"):
+            if rel.attrib.get("Id") == sheet_rel_id:
+                sheet_target = rel.attrib.get("Target")
+                break
+        if not sheet_target:
+            raise RuntimeError("Historical XLSX worksheet target not found.")
+
+        if sheet_target.startswith("/"):
+            sheet_path = sheet_target.lstrip("/")
+        else:
+            sheet_path = posixpath.normpath(posixpath.join("xl", sheet_target))
+
+        shared_strings: list[str] = []
+        if "xl/sharedStrings.xml" in set(zf.namelist()):
+            shared_xml = ET.fromstring(zf.read("xl/sharedStrings.xml"))
+            for si in shared_xml.findall(f"{{{ns_main}}}si"):
+                shared_strings.append("".join(si.itertext()))
+
+        sheet_xml = ET.fromstring(zf.read(sheet_path))
+        sheet_data = sheet_xml.find(f"{{{ns_main}}}sheetData")
+        if sheet_data is None:
+            raise RuntimeError("Historical XLSX sheetData not found.")
+
+        matrix_rows: list[list[Any]] = []
+        for row_elem in sheet_data.findall(f"{{{ns_main}}}row"):
+            row_cells: dict[int, Any] = {}
+            cursor = 0
+            for cell in row_elem.findall(f"{{{ns_main}}}c"):
+                ref = cell.attrib.get("r", "")
+                col_idx = xlsx_col_to_index(ref) if ref else cursor
+                if col_idx is None:
+                    col_idx = cursor
+                cursor = col_idx + 1
+                row_cells[col_idx] = xlsx_cell_value(cell, shared_strings, ns_main)
+            if not row_cells:
+                matrix_rows.append([])
+                continue
+            max_col = max(row_cells)
+            matrix_rows.append([row_cells.get(i) for i in range(max_col + 1)])
+
+    headers: list[str] | None = None
+    header_used: set[str] = set()
+    parsed_rows: list[dict[str, Any]] = []
+
+    for values in matrix_rows:
+        if all(v is None or str(v).strip() == "" for v in values):
+            continue
+
+        if headers is None:
+            headers = [normalize_header_name(v, i, header_used) for i, v in enumerate(values)]
+            continue
+
+        if len(values) > len(headers):
+            for i in range(len(headers), len(values)):
+                headers.append(normalize_header_name(None, i, header_used))
+
+        row_dict: dict[str, Any] = {}
+        has_any = False
+        for idx, name in enumerate(headers):
+            value = values[idx] if idx < len(values) else None
+            if isinstance(value, str):
+                stripped = value.strip()
+                value = stripped if stripped else None
+            if value is not None:
+                has_any = True
+            row_dict[name] = value
+        if has_any:
+            parsed_rows.append(row_dict)
+
+    if headers is None:
+        raise RuntimeError("Historical XLSX has no header row.")
+    return parsed_rows
+
+
+def load_historical_rows(
+    source: str,
+    timeout_seconds: int,
+    insecure_skip_verify: bool,
+) -> tuple[list[dict[str, Any]], str]:
+    raw = read_source_bytes(
+        source=source,
+        timeout_seconds=timeout_seconds,
+        insecure_skip_verify=insecure_skip_verify,
+    )
+    data_format = detect_historical_format(source, raw)
+    if data_format == "xlsx":
+        return parse_xlsx_rows(raw), data_format
+    return parse_csv_rows(decode_text(raw)), data_format
 
 
 def stable_synthetic_objectid(seed: str) -> int:
@@ -764,7 +984,7 @@ def should_refresh_historical(
     return age_seconds >= max(refresh_hours, 1) * 3600
 
 
-def import_historical_csv(
+def import_historical_source(
     conn: sqlite3.Connection,
     state: dict[str, Any],
     source: str | None,
@@ -788,53 +1008,66 @@ def import_historical_csv(
     ):
         return 0, False
 
-    text = read_text_source(
+    historical_rows, source_format = load_historical_rows(
         source=source,
         timeout_seconds=timeout_seconds,
         insecure_skip_verify=insecure_skip_verify,
     )
-    try:
-        dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|")
-    except csv.Error:
-        dialect = csv.excel
-    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
-    if not reader.fieldnames:
-        raise RuntimeError("Historical CSV has no header row.")
 
     inserted_rows = 0
     now_iso = utc_now_iso()
 
-    for raw_row in reader:
-        if not isinstance(raw_row, dict):
-            continue
+    for raw_row in historical_rows:
         row = {str(k).strip(): v for k, v in raw_row.items() if k is not None}
         key_map = build_row_key_map(row)
 
-        code = pick_row_value(row, key_map, ["code", "codigo", "src_code"])
+        code = pick_row_value(
+            row,
+            key_map,
+            ["code", "codigo", "cod", "event_code", "src_code"],
+        )
         source_objectid = to_int(
-            pick_row_value(row, key_map, ["objectid", "id", "oid", "src_objectid"])
+            pick_row_value(row, key_map, ["objectid", "id", "oid", "id_evento", "src_objectid"])
         )
 
-        fecha_ms_int = to_int(pick_row_value(row, key_map, ["fecha_ms", "fecha", "src_fecha"]))
-        fechaevento_ms_int = to_int(
-            pick_row_value(
-                row,
-                key_map,
-                ["fechaevento_ms", "fechaevento", "src_fechaevento"],
-            )
+        fecha_raw = pick_row_value(row, key_map, ["fecha", "fecha_ms", "src_fecha"])
+        fechaevento_raw = pick_row_value(
+            row,
+            key_map,
+            ["fechaevento", "fechaevento_ms", "src_fechaevento", "fecha_hora", "datetime"],
         )
+        fecha_ms_int = to_epoch_ms(fecha_raw)
+        fechaevento_ms_int = to_epoch_ms(fechaevento_raw)
         hora_value = pick_row_value(row, key_map, ["hora", "event_time_local", "src_hora"])
         hora_text = str(hora_value) if hora_value is not None else None
 
-        event_ts_utc = parse_datetime_to_utc_iso(
-            pick_row_value(row, key_map, ["event_ts_utc", "timestamp_utc", "utc_datetime"]),
+        event_ts_utc_raw = pick_row_value(
+            row, key_map, ["event_ts_utc", "timestamp_utc", "utc_datetime", "datetime_utc"]
+        )
+        event_ts_utc = parse_excel_serial_to_utc_iso(
+            event_ts_utc_raw,
             assume_tz=timezone.utc,
         )
         if event_ts_utc is None:
+            event_ts_utc = parse_datetime_to_utc_iso(event_ts_utc_raw, assume_tz=timezone.utc)
+        if event_ts_utc is None:
+            local_ts_raw = pick_row_value(
+                row,
+                key_map,
+                ["event_ts_local", "event_ts_et", "timestamp_local", "fecha_hora", "datetime"],
+            )
+            event_ts_utc = parse_excel_serial_to_utc_iso(local_ts_raw, assume_tz=LOCAL_TZ)
+        if event_ts_utc is None:
             event_ts_utc = parse_datetime_to_utc_iso(
-                pick_row_value(row, key_map, ["event_ts_local", "event_ts_et", "timestamp_local"]),
+                local_ts_raw,
                 assume_tz=LOCAL_TZ,
             )
+        if event_ts_utc is None:
+            event_ts_utc = parse_excel_serial_to_utc_iso(fechaevento_raw, assume_tz=LOCAL_TZ)
+        if event_ts_utc is None:
+            event_ts_utc = parse_datetime_to_utc_iso(fechaevento_raw, assume_tz=LOCAL_TZ)
+        if event_ts_utc is None and hora_text and fecha_raw is not None:
+            event_ts_utc = parse_datetime_to_utc_iso(f"{fecha_raw} {hora_text}", assume_tz=LOCAL_TZ)
         if event_ts_utc is None:
             event_ts_utc, _, _, _ = parse_event_times(
                 fechaevento_ms=fechaevento_ms_int,
@@ -846,18 +1079,22 @@ def import_historical_csv(
             event_ts_utc, LOCAL_TZ
         )
 
-        lat = to_float(pick_row_value(row, key_map, ["lat", "latitude", "src_lat", "y"]))
+        lat = to_float(pick_row_value(row, key_map, ["lat", "latitude", "latitud", "src_lat", "y"]))
         lon = to_float(
-            pick_row_value(row, key_map, ["lon", "lng", "longitude", "src_lon", "x"])
+            pick_row_value(row, key_map, ["lon", "lng", "longitude", "longitud", "src_lon", "x"])
         )
         magnitud = to_float(
-            pick_row_value(row, key_map, ["magnitud", "magnitude", "src_magnitud", "src_mag", "mag"])
+            pick_row_value(
+                row,
+                key_map,
+                ["magnitud", "magnitude", "mag", "ml", "mw", "src_magnitud", "src_mag"],
+            )
         )
-        prof = to_int(pick_row_value(row, key_map, ["prof", "depth", "src_prof"]))
-        profundidad = pick_row_value(row, key_map, ["profundidad", "src_profundidad"])
+        prof = to_int(pick_row_value(row, key_map, ["prof", "depth", "depth_km", "src_prof"]))
+        profundidad = pick_row_value(row, key_map, ["profundidad", "depth_type", "src_profundidad"])
         intensidad = pick_row_value(row, key_map, ["intensidad", "int_", "src_int_"])
-        departamento = pick_row_value(row, key_map, ["departamento", "src_departamento"])
-        referencia = pick_row_value(row, key_map, ["referencia", "ref", "src_ref"])
+        departamento = pick_row_value(row, key_map, ["departamento", "region", "src_departamento"])
+        referencia = pick_row_value(row, key_map, ["referencia", "ref", "ubicacion", "src_ref"])
         ultimo = to_int(pick_row_value(row, key_map, ["ultimo", "src_ultimo"]))
         reporte = to_int(pick_row_value(row, key_map, ["reporte", "src_reporte"]))
         mag = to_float(pick_row_value(row, key_map, ["mag", "src_mag"]))
@@ -884,7 +1121,7 @@ def import_historical_csv(
             geom_payload = {"x": lon, "y": lat}
 
         attrs_payload = {k: v for k, v in row.items()}
-        attrs_payload["source_type"] = "historical_csv"
+        attrs_payload["source_type"] = f"historical_{source_format}"
         attrs_payload["source_ref"] = source
 
         changed = upsert_raw_event(
@@ -1207,7 +1444,7 @@ def run_once(
             )
             new_fields = sync_schema_metadata(conn, metadata, known_fields)
 
-        historical_rows, historical_refreshed = import_historical_csv(
+        historical_rows, historical_refreshed = import_historical_source(
             conn=conn,
             state=state,
             source=historical_source,
@@ -1306,7 +1543,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=os.getenv("IGP_HISTORICAL_SOURCE_URL"),
         help=(
-            "Optional URL or local CSV path for historical backfill. "
+            "Optional URL or local CSV/XLSX path for historical backfill. "
             "If omitted, only live API rows are ingested."
         ),
     )
