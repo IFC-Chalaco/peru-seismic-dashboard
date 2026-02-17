@@ -8,7 +8,7 @@
 
 ## Overview
 
-This project implements a cloud-automated data ingestion pipeline that continuously pulls public seismic data from the official IGP (Instituto Geofisico del Peru) ArcGIS REST service and publishes BI-ready datasets for visualization tools such as Tableau and Power BI.
+This project implements a cloud-automated data ingestion pipeline that continuously pulls public seismic data from official IGP (Instituto Geofisico del Peru) sources and publishes BI-ready datasets for visualization tools such as Tableau and Power BI.
 
 The objective is to maintain a reliable, incremental, schema-aware public data feed suitable for real-time dashboards and analytics.
 
@@ -16,10 +16,15 @@ The objective is to maintain a reliable, incremental, schema-aware public data f
 
 https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/MapServer/0
 
+Additional official source used by reportes-sismicos:
+
+`https://ultimosismo.igp.gob.pe/api/ultimo-sismo/ajaxb/<year>`
+
 Important data scope note:
 
 - The live ArcGIS layer is near-real-time and may expose only recent/year-to-date events.
-- For multi-year history, configure an additional historical CSV/XLSX source. The pipeline can merge historical + live rows automatically.
+- The reportes-sismicos endpoint is queried by year (default range: 2020 to current year) and fills that multi-year window.
+- Optional historical CSV/XLSX can still be merged for older history (for example, 1960+ catalogs).
 
 This repository does NOT host private data.
 It consumes publicly available government data and republishes structured derivatives for analytics purposes.
@@ -48,6 +53,7 @@ The pipeline consumes an official ArcGIS REST endpoint and republishes structure
 ## What the Pipeline Does
 
 - Incrementally pulls new seismic events using `objectid`
+- Imports year-filtered reportes-sismicos data (default: 2020..current year)
 - Optionally imports historical CSV/XLSX data and merges it with the live feed
 - Stores full history in SQLite (`raw_events` table)
 - Preserves full raw attributes JSON for auditability
@@ -143,8 +149,29 @@ In GitHub:
 1. `Settings` -> `Secrets and variables` -> `Actions` -> `Variables`
 2. Add `IGP_HISTORICAL_SOURCE_URL` = `<public historical CSV/XLSX URL>`
 3. Optional: add `IGP_HISTORICAL_REFRESH_HOURS` = `24`
-4. Run `Refresh IGP Seismic Feed` once manually
-5. Verify `earthquakes_live_curated.csv` includes older years
+4. Optional historical year bounds:
+   - `IGP_HISTORICAL_START_YEAR` (example: `1960`)
+   - `IGP_HISTORICAL_END_YEAR` (example: `2020`)
+5. Optional reportes controls:
+   - `IGP_REPORTES_BASE_URL` (default: `https://ultimosismo.igp.gob.pe/api/ultimo-sismo/ajaxb`)
+   - `IGP_REPORTES_START_YEAR` (default: `2020`)
+   - `IGP_REPORTES_END_YEAR` (default: current year)
+   - `IGP_REPORTES_REFRESH_HOURS` (default: `24`)
+6. Run `Refresh IGP Seismic Feed` once manually
+7. Verify `earthquakes_live_curated.csv` includes expected years
+
+Recommended variable set for:
+- Historical catalog: 1960..2020
+- Reportes endpoint: 2020..2026
+- Live ArcGIS updates for latest events
+
+```
+IGP_HISTORICAL_SOURCE_URL=https://www.datosabiertos.gob.pe/sites/default/files/Catalogo1960_2023.xlsx
+IGP_HISTORICAL_START_YEAR=1960
+IGP_HISTORICAL_END_YEAR=2020
+IGP_REPORTES_START_YEAR=2020
+IGP_REPORTES_END_YEAR=2026
+```
 
 If `IGP_HISTORICAL_SOURCE_URL` is empty, the workflow runs live-only mode.
 
@@ -237,6 +264,10 @@ Recommended semantic roles:
 
 - Added historical backfill support from public CSV/XLSX sources.
 - Enabled direct ingestion of official IGP historical catalog (`Catalogo1960_2023.xlsx`).
+- Added ingestion from official reportes-sismicos yearly endpoint (`/api/ultimo-sismo/ajaxb/<year>`) for 2020+ coverage.
+- Added optional historical year bounds (`IGP_HISTORICAL_START_YEAR`, `IGP_HISTORICAL_END_YEAR`).
+- Added optional reportes controls (`IGP_REPORTES_START_YEAR`, `IGP_REPORTES_END_YEAR`) to shape overlap with live feed.
+- Added departamento enrichment for reportes rows by parsing source location references.
 - Merged live ArcGIS feed + historical catalog into a single curated export.
 - Added robust parsing for compact UTC fields from historical files (e.g., `FECHA_UTC`, `HORA_UTC`).
 - Kept ET-ready fields in curated output: `event_ts_et`, `event_date_et`, `event_time_et`.

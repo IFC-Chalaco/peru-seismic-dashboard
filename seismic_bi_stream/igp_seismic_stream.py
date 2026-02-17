@@ -31,6 +31,8 @@ ARC_LAYER_URL = (
 )
 QUERY_URL = f"{ARC_LAYER_URL}/query"
 METADATA_URL = f"{ARC_LAYER_URL}?f=pjson"
+REPORTES_BASE_URL = "https://ultimosismo.igp.gob.pe/api/ultimo-sismo/ajaxb"
+DEFAULT_REPORTES_START_YEAR = 2020
 LOCAL_TZ = ZoneInfo("America/Lima")
 ET_TZ = ZoneInfo("America/New_York")
 
@@ -40,6 +42,8 @@ class RunSummary:
     new_rows: int
     historical_rows: int
     historical_error: str | None
+    reportes_rows: int
+    reportes_error: str | None
     latest_objectid: int
     total_rows: int
     new_fields: list[str]
@@ -310,6 +314,14 @@ def normalize_time_text(value: Any) -> str | None:
     raw = str(value).strip()
     if not raw:
         return None
+    if "T" in raw:
+        iso_candidate = raw.replace("Z", "+00:00")
+        try:
+            parsed_iso = datetime.fromisoformat(iso_candidate)
+        except ValueError:
+            parsed_iso = None
+        if parsed_iso is not None:
+            return parsed_iso.strftime("%H:%M:%S")
     if ":" in raw:
         parts = raw.split(":")
         if len(parts) == 3:
@@ -330,6 +342,21 @@ def normalize_time_text(value: Any) -> str | None:
         if 0 <= hh <= 23 and 0 <= mm <= 59 and 0 <= ss <= 59:
             return f"{hh:02d}:{mm:02d}:{ss:02d}"
     return raw
+
+
+def extract_date_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    if "T" in raw:
+        raw = raw.split("T", 1)[0].strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        return raw
+    if re.fullmatch(r"\d{8}", raw):
+        return f"{raw[0:4]}-{raw[4:6]}-{raw[6:8]}"
+    return None
 
 
 def decode_text(raw: bytes) -> str:
@@ -609,6 +636,30 @@ def http_get_json(
         raise RuntimeError(f"ArcGIS API error: {payload['error']}")
     if not isinstance(payload, dict):
         raise RuntimeError("Unexpected API response format.")
+    return payload
+
+
+def http_get_list(
+    url: str,
+    params: dict[str, Any] | None,
+    timeout_seconds: int,
+    insecure_skip_verify: bool,
+) -> list[Any]:
+    full_url = f"{url}?{urlencode(params)}" if params else url
+    req = Request(full_url, headers={"User-Agent": "igp-seismic-stream/1.0"})
+    ssl_context = ssl.create_default_context()
+    if insecure_skip_verify:
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+
+    with urlopen(req, timeout=timeout_seconds, context=ssl_context) as response:
+        charset = response.headers.get_content_charset() or "utf-8"
+        content = response.read().decode(charset)
+    payload = json.loads(content)
+    if isinstance(payload, dict) and "error" in payload:
+        raise RuntimeError(f"API error: {payload['error']}")
+    if not isinstance(payload, list):
+        raise RuntimeError("Unexpected API response format (expected list).")
     return payload
 
 
@@ -1128,6 +1179,8 @@ def import_historical_source(
     insecure_skip_verify: bool,
     refresh_hours: int,
     force_refresh: bool,
+    start_year: int | None,
+    end_year: int | None,
 ) -> tuple[int, bool]:
     if source is None:
         return 0, False
@@ -1152,6 +1205,10 @@ def import_historical_source(
 
     inserted_rows = 0
     now_iso = utc_now_iso()
+    min_year = max(1800, int(start_year)) if start_year is not None else None
+    max_year = max(1800, int(end_year)) if end_year is not None else None
+    if min_year is not None and max_year is not None and max_year < min_year:
+        min_year, max_year = max_year, min_year
 
     for raw_row in historical_rows:
         row = {str(k).strip(): v for k, v in raw_row.items() if k is not None}
@@ -1333,6 +1390,23 @@ def import_historical_source(
             event_ts_utc, LOCAL_TZ
         )
 
+        event_year: int | None = None
+        parsed_event_dt = iso_to_utc_datetime(event_ts_utc)
+        if parsed_event_dt is not None:
+            event_year = parsed_event_dt.year
+        if event_year is None:
+            year_candidate = pick_row_value(
+                row,
+                key_map,
+                ["year", "anio", "ano", "yyyy", "año", "src_year"],
+            )
+            event_year = to_int(year_candidate)
+
+        if min_year is not None and (event_year is None or event_year < min_year):
+            continue
+        if max_year is not None and (event_year is None or event_year > max_year):
+            continue
+
         lat = to_float(pick_row_value(row, key_map, ["lat", "latitude", "latitud", "src_lat", "y"]))
         lon = to_float(
             pick_row_value(row, key_map, ["lon", "lng", "longitude", "longitud", "src_lon", "x"])
@@ -1410,6 +1484,258 @@ def import_historical_source(
     conn.commit()
     state["historical_source"] = source
     state["historical_last_refresh_utc"] = utc_now_iso()
+    return inserted_rows, True
+
+
+def should_refresh_reportes(
+    state: dict[str, Any],
+    base_url: str,
+    start_year: int,
+    end_year: int,
+    refresh_hours: int,
+    force_refresh: bool,
+) -> bool:
+    if force_refresh:
+        return True
+
+    if str(state.get("reportes_base_url", "")) != base_url:
+        return True
+    if to_int(state.get("reportes_start_year")) != start_year:
+        return True
+    if to_int(state.get("reportes_end_year")) != end_year:
+        return True
+
+    last_refresh = iso_to_utc_datetime(str(state.get("reportes_last_refresh_utc", "")))
+    if last_refresh is None:
+        return True
+
+    age_seconds = (datetime.now(timezone.utc) - last_refresh).total_seconds()
+    return age_seconds >= max(refresh_hours, 1) * 3600
+
+
+def fetch_reportes_rows_for_year(
+    base_url: str,
+    year: int,
+    timeout_seconds: int,
+    insecure_skip_verify: bool,
+) -> list[dict[str, Any]]:
+    url = f"{base_url.rstrip('/')}/{year}"
+    payload = http_get_list(
+        url=url,
+        params=None,
+        timeout_seconds=timeout_seconds,
+        insecure_skip_verify=insecure_skip_verify,
+    )
+    return [row for row in payload if isinstance(row, dict)]
+
+
+def build_reportes_reference(row: dict[str, Any]) -> str | None:
+    parts: list[str] = []
+    for key in ("referencia", "referencia2", "referencia3"):
+        value = row.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        if text not in parts:
+            parts.append(text)
+    if not parts:
+        return None
+    return " | ".join(parts)
+
+
+def build_reportes_departamento(row: dict[str, Any]) -> str | None:
+    explicit = row.get("departamento")
+    if explicit is not None:
+        text = str(explicit).strip()
+        if text:
+            return text
+
+    for key in ("referencia", "referencia2", "referencia3"):
+        value = row.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        if " - " not in text:
+            continue
+        maybe_dep = text.rsplit(" - ", 1)[-1].strip()
+        if maybe_dep:
+            return maybe_dep
+    return None
+
+
+def import_reportes_source(
+    conn: sqlite3.Connection,
+    state: dict[str, Any],
+    base_url: str | None,
+    start_year: int,
+    end_year: int | None,
+    timeout_seconds: int,
+    insecure_skip_verify: bool,
+    refresh_hours: int,
+    force_refresh: bool,
+) -> tuple[int, bool]:
+    if base_url is None:
+        return 0, False
+
+    base_url = base_url.strip()
+    if not base_url:
+        return 0, False
+
+    current_year = datetime.now(LOCAL_TZ).year
+    start = max(1900, int(start_year))
+    end = current_year if end_year is None else int(end_year)
+    end = min(max(end, start), current_year)
+
+    if not should_refresh_reportes(
+        state=state,
+        base_url=base_url,
+        start_year=start,
+        end_year=end,
+        refresh_hours=refresh_hours,
+        force_refresh=force_refresh,
+    ):
+        return 0, False
+
+    inserted_rows = 0
+    now_iso = utc_now_iso()
+
+    for year in range(start, end + 1):
+        rows = fetch_reportes_rows_for_year(
+            base_url=base_url,
+            year=year,
+            timeout_seconds=timeout_seconds,
+            insecure_skip_verify=insecure_skip_verify,
+        )
+        for raw_row in rows:
+            row = {str(k).strip(): v for k, v in raw_row.items() if k is not None}
+
+            code = row.get("codigo")
+            source_objectid = to_int(row.get("idlistasismos"))
+            fecha_local_raw = row.get("fecha_local")
+            fecha_local_date = extract_date_text(fecha_local_raw)
+            hora_local_text = normalize_time_text(row.get("hora_local"))
+            fecha_utc_raw = row.get("fecha_utc")
+            fecha_utc_date = extract_date_text(fecha_utc_raw)
+            hora_utc_text = normalize_time_text(row.get("hora_utc"))
+
+            event_ts_utc: str | None = None
+            if fecha_utc_date and hora_utc_text:
+                event_ts_utc = parse_datetime_to_utc_iso(
+                    f"{fecha_utc_date} {hora_utc_text}",
+                    assume_tz=timezone.utc,
+                )
+            if event_ts_utc is None and fecha_local_date and hora_local_text:
+                event_ts_utc = parse_datetime_to_utc_iso(
+                    f"{fecha_local_date} {hora_local_text}",
+                    assume_tz=LOCAL_TZ,
+                )
+            if event_ts_utc is None:
+                event_ts_utc = parse_datetime_to_utc_iso(
+                    row.get("createdAt"),
+                    assume_tz=timezone.utc,
+                )
+            if event_ts_utc is None and fecha_utc_raw:
+                event_ts_utc = parse_datetime_to_utc_iso(fecha_utc_raw, assume_tz=timezone.utc)
+
+            event_ts_local, event_date_local, event_time_local = iso_utc_to_zone_fields(
+                event_ts_utc, LOCAL_TZ
+            )
+            fechaevento_ms_int: int | None = None
+            if event_ts_utc:
+                parsed_event_dt = iso_to_utc_datetime(event_ts_utc)
+                if parsed_event_dt:
+                    fechaevento_ms_int = int(parsed_event_dt.timestamp() * 1000)
+
+            fecha_ms_int: int | None = None
+            if fecha_local_date:
+                parsed_local_date = parse_datetime_to_utc_iso(fecha_local_date, assume_tz=LOCAL_TZ)
+                parsed_local_date_dt = iso_to_utc_datetime(parsed_local_date)
+                if parsed_local_date_dt:
+                    fecha_ms_int = int(parsed_local_date_dt.timestamp() * 1000)
+
+            lat = to_float(row.get("latitud"))
+            lon = to_float(row.get("longitud"))
+            magnitud = to_float(row.get("magnitud"))
+            prof = to_int(row.get("profundidad"))
+            prof_float = to_float(row.get("profundidad"))
+            if prof is None and prof_float is not None:
+                prof = int(round(prof_float))
+
+            profundidad_text = None
+            if row.get("profundidad") is not None:
+                depth_raw = str(row.get("profundidad")).strip()
+                if depth_raw:
+                    profundidad_text = depth_raw
+
+            intensidad = row.get("intensidad")
+            departamento = build_reportes_departamento(row)
+            referencia = build_reportes_reference(row)
+            reporte = to_int(row.get("numero_reporte"))
+            ultimo = to_int(row.get("publicado"))
+
+            seed = "|".join(
+                [
+                    "reportes_api",
+                    str(base_url),
+                    str(year),
+                    str(source_objectid if source_objectid is not None else ""),
+                    str(code or ""),
+                    str(event_ts_utc or ""),
+                    str(lat if lat is not None else ""),
+                    str(lon if lon is not None else ""),
+                    str(magnitud if magnitud is not None else ""),
+                    str(prof if prof is not None else ""),
+                ]
+            )
+            objectid = stable_synthetic_objectid(seed)
+
+            geom_payload: dict[str, Any] = {}
+            if lat is not None and lon is not None:
+                geom_payload = {"x": lon, "y": lat}
+
+            attrs_payload = {k: v for k, v in row.items()}
+            attrs_payload["source_type"] = "reportes_api"
+            attrs_payload["source_year"] = year
+            attrs_payload["source_ref"] = base_url
+
+            changed = upsert_raw_event(
+                conn,
+                objectid=objectid,
+                code=code,
+                event_ts_utc=event_ts_utc,
+                event_ts_local=event_ts_local,
+                event_date_local=event_date_local,
+                event_time_local=event_time_local,
+                fecha_ms=fecha_ms_int,
+                fechaevento_ms=fechaevento_ms_int,
+                hora=hora_local_text or hora_utc_text,
+                lat=lat,
+                lon=lon,
+                magnitud=magnitud,
+                prof=prof,
+                profundidad=profundidad_text,
+                intensidad=intensidad,
+                departamento=departamento,
+                referencia=referencia,
+                ultimo=ultimo,
+                reporte=reporte,
+                mag=magnitud,
+                raw_attributes=attrs_payload,
+                raw_geometry=geom_payload,
+                ingested_at_utc=now_iso,
+            )
+            if changed:
+                inserted_rows += 1
+
+    conn.commit()
+    state["reportes_base_url"] = base_url
+    state["reportes_start_year"] = start
+    state["reportes_end_year"] = end
+    state["reportes_last_refresh_utc"] = utc_now_iso()
     return inserted_rows, True
 
 
@@ -1685,6 +2011,14 @@ def run_once(
     historical_source: str | None,
     historical_refresh_hours: int,
     force_historical_refresh: bool,
+    historical_start_year: int | None,
+    historical_end_year: int | None,
+    reportes_base_url: str | None,
+    reportes_start_year: int,
+    reportes_end_year: int | None,
+    reportes_refresh_hours: int,
+    force_reportes_refresh: bool,
+    skip_reportes_fetch: bool,
     skip_live_fetch: bool,
 ) -> RunSummary:
     state = load_state(state_path)
@@ -1718,20 +2052,45 @@ def run_once(
         historical_error: str | None = None
         try:
             historical_rows, historical_refreshed = import_historical_source(
-            conn=conn,
-            state=state,
-            source=historical_source,
-            timeout_seconds=timeout_seconds,
-            insecure_skip_verify=insecure_skip_verify,
-            refresh_hours=historical_refresh_hours,
-            force_refresh=(force_historical_refresh or db_is_empty),
-        )
+                conn=conn,
+                state=state,
+                source=historical_source,
+                timeout_seconds=timeout_seconds,
+                insecure_skip_verify=insecure_skip_verify,
+                refresh_hours=historical_refresh_hours,
+                force_refresh=(force_historical_refresh or db_is_empty),
+                start_year=historical_start_year,
+                end_year=historical_end_year,
+            )
             state.pop("historical_last_error", None)
             state.pop("historical_last_error_utc", None)
         except Exception as exc:
             historical_error = str(exc)
             state["historical_last_error"] = historical_error
             state["historical_last_error_utc"] = utc_now_iso()
+
+        reportes_rows = 0
+        reportes_refreshed = False
+        reportes_error: str | None = None
+        if not skip_reportes_fetch:
+            try:
+                reportes_rows, reportes_refreshed = import_reportes_source(
+                    conn=conn,
+                    state=state,
+                    base_url=reportes_base_url,
+                    start_year=reportes_start_year,
+                    end_year=reportes_end_year,
+                    timeout_seconds=timeout_seconds,
+                    insecure_skip_verify=insecure_skip_verify,
+                    refresh_hours=reportes_refresh_hours,
+                    force_refresh=(force_reportes_refresh or db_is_empty),
+                )
+                state.pop("reportes_last_error", None)
+                state.pop("reportes_last_error_utc", None)
+            except Exception as exc:
+                reportes_error = str(exc)
+                state["reportes_last_error"] = reportes_error
+                state["reportes_last_error_utc"] = utc_now_iso()
 
         if skip_live_fetch:
             upsert_count, latest_seen = 0, last_objectid
@@ -1749,6 +2108,9 @@ def run_once(
         if historical_refreshed:
             last_hist_et, _, _ = iso_utc_to_zone_fields(state["historical_last_refresh_utc"], ET_TZ)
             state["historical_last_refresh_et"] = last_hist_et
+        if reportes_refreshed:
+            last_rep_et, _, _ = iso_utc_to_zone_fields(state["reportes_last_refresh_utc"], ET_TZ)
+            state["reportes_last_refresh_et"] = last_rep_et
         state["known_fields"] = known_fields
         state["last_run_utc"] = utc_now_iso()
         last_run_et, _, _ = iso_utc_to_zone_fields(state["last_run_utc"], ET_TZ)
@@ -1768,6 +2130,8 @@ def run_once(
             new_rows=upsert_count,
             historical_rows=historical_rows,
             historical_error=historical_error,
+            reportes_rows=reportes_rows,
+            reportes_error=reportes_error,
             latest_objectid=int(state["last_objectid"]),
             total_rows=count_rows(conn),
             new_fields=new_fields,
@@ -1787,6 +2151,44 @@ def build_parser() -> argparse.ArgumentParser:
         parsed_refresh = to_int(env_refresh)
         if parsed_refresh is not None and parsed_refresh > 0:
             historical_refresh_default = parsed_refresh
+    historical_start_default: int | None = None
+    env_historical_start = os.getenv("IGP_HISTORICAL_START_YEAR", "").strip()
+    if env_historical_start:
+        parsed_historical_start = to_int(env_historical_start)
+        if parsed_historical_start is not None and parsed_historical_start >= 1800:
+            historical_start_default = parsed_historical_start
+    historical_end_default: int | None = None
+    env_historical_end = os.getenv("IGP_HISTORICAL_END_YEAR", "").strip()
+    if env_historical_end:
+        parsed_historical_end = to_int(env_historical_end)
+        if parsed_historical_end is not None and parsed_historical_end >= 1800:
+            historical_end_default = parsed_historical_end
+
+    reportes_refresh_default = 24
+    env_reportes_refresh = os.getenv("IGP_REPORTES_REFRESH_HOURS", "").strip()
+    if env_reportes_refresh:
+        parsed_reportes_refresh = to_int(env_reportes_refresh)
+        if parsed_reportes_refresh is not None and parsed_reportes_refresh > 0:
+            reportes_refresh_default = parsed_reportes_refresh
+
+    reportes_start_default = DEFAULT_REPORTES_START_YEAR
+    env_reportes_start = os.getenv("IGP_REPORTES_START_YEAR", "").strip()
+    if env_reportes_start:
+        parsed_reportes_start = to_int(env_reportes_start)
+        if parsed_reportes_start is not None and parsed_reportes_start >= 1900:
+            reportes_start_default = parsed_reportes_start
+
+    reportes_end_default: int | None = None
+    env_reportes_end = os.getenv("IGP_REPORTES_END_YEAR", "").strip()
+    if env_reportes_end:
+        parsed_reportes_end = to_int(env_reportes_end)
+        if parsed_reportes_end is not None and parsed_reportes_end >= 1900:
+            reportes_end_default = parsed_reportes_end
+
+    reportes_base_default = os.getenv("IGP_REPORTES_BASE_URL", REPORTES_BASE_URL).strip()
+    if not reportes_base_default:
+        reportes_base_default = REPORTES_BASE_URL
+
     preview_rows_default = 500
     env_preview_rows = os.getenv("IGP_PREVIEW_ROWS", "").strip()
     if env_preview_rows:
@@ -1852,9 +2254,58 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--historical-start-year",
+        type=int,
+        default=historical_start_default,
+        help="Optional first year to keep from historical source.",
+    )
+    parser.add_argument(
+        "--historical-end-year",
+        type=int,
+        default=historical_end_default,
+        help="Optional last year to keep from historical source.",
+    )
+    parser.add_argument(
         "--force-historical-refresh",
         action="store_true",
         help="Refresh historical source now, ignoring last historical refresh timestamp.",
+    )
+    parser.add_argument(
+        "--reportes-base-url",
+        type=str,
+        default=reportes_base_default,
+        help=(
+            "Base URL for reportes-sismicos yearly endpoint. "
+            "Expected pattern: <base>/<year>."
+        ),
+    )
+    parser.add_argument(
+        "--reportes-start-year",
+        type=int,
+        default=reportes_start_default,
+        help="First year to ingest from reportes-sismicos endpoint.",
+    )
+    parser.add_argument(
+        "--reportes-end-year",
+        type=int,
+        default=reportes_end_default,
+        help="Last year to ingest from reportes-sismicos endpoint (default: current year).",
+    )
+    parser.add_argument(
+        "--reportes-refresh-hours",
+        type=int,
+        default=reportes_refresh_default,
+        help="How often to refresh reportes-sismicos endpoint (hours).",
+    )
+    parser.add_argument(
+        "--force-reportes-refresh",
+        action="store_true",
+        help="Refresh reportes-sismicos source now, ignoring last refresh timestamp.",
+    )
+    parser.add_argument(
+        "--skip-reportes-fetch",
+        action="store_true",
+        help="Skip reportes-sismicos yearly fetch (useful for troubleshooting).",
     )
     parser.add_argument(
         "--skip-live-fetch",
@@ -1892,6 +2343,22 @@ def main() -> int:
         parser.error("--interval-seconds must be at least 5.")
     if args.historical_refresh_hours < 1:
         parser.error("--historical-refresh-hours must be at least 1.")
+    if args.historical_start_year is not None and args.historical_start_year < 1800:
+        parser.error("--historical-start-year must be at least 1800.")
+    if args.historical_end_year is not None and args.historical_end_year < 1800:
+        parser.error("--historical-end-year must be at least 1800.")
+    if (
+        args.historical_start_year is not None
+        and args.historical_end_year is not None
+        and args.historical_end_year < args.historical_start_year
+    ):
+        parser.error("--historical-end-year must be greater than or equal to --historical-start-year.")
+    if args.reportes_start_year < 1900:
+        parser.error("--reportes-start-year must be at least 1900.")
+    if args.reportes_end_year is not None and args.reportes_end_year < args.reportes_start_year:
+        parser.error("--reportes-end-year must be greater than or equal to --reportes-start-year.")
+    if args.reportes_refresh_hours < 1:
+        parser.error("--reportes-refresh-hours must be at least 1.")
 
     while True:
         try:
@@ -1906,6 +2373,14 @@ def main() -> int:
                 historical_source=args.historical_source,
                 historical_refresh_hours=args.historical_refresh_hours,
                 force_historical_refresh=args.force_historical_refresh,
+                historical_start_year=args.historical_start_year,
+                historical_end_year=args.historical_end_year,
+                reportes_base_url=args.reportes_base_url,
+                reportes_start_year=args.reportes_start_year,
+                reportes_end_year=args.reportes_end_year,
+                reportes_refresh_hours=args.reportes_refresh_hours,
+                force_reportes_refresh=args.force_reportes_refresh,
+                skip_reportes_fetch=args.skip_reportes_fetch,
                 skip_live_fetch=args.skip_live_fetch,
             )
             now_utc = utc_now_iso()
@@ -1917,6 +2392,8 @@ def main() -> int:
                         "new_rows": summary.new_rows,
                         "historical_rows": summary.historical_rows,
                         "historical_error": summary.historical_error,
+                        "reportes_rows": summary.reportes_rows,
+                        "reportes_error": summary.reportes_error,
                         "latest_objectid": summary.latest_objectid,
                         "total_rows": summary.total_rows,
                         "new_fields": summary.new_fields,
@@ -1927,6 +2404,11 @@ def main() -> int:
                         "run_at_utc": now_utc,
                         "run_at_et": now_et,
                         "historical_source": args.historical_source,
+                        "historical_start_year": args.historical_start_year,
+                        "historical_end_year": args.historical_end_year,
+                        "reportes_base_url": args.reportes_base_url,
+                        "reportes_start_year": args.reportes_start_year,
+                        "reportes_end_year": args.reportes_end_year,
                     }
                 )
             )
