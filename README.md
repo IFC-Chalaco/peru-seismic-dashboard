@@ -1,333 +1,249 @@
-# 🌎 IGP Seismic Data Stream
-## Automated Public Seismic Data Pipeline for BI Dashboards
-## Flujo Automatizado de Datos Sísmicos Públicos para BI
+# 🌎 IGP Seismic Data Pipeline
+### Historical + Live Unified Seismic Feed
+### Pipeline Automatizado de Datos Sísmicos Históricos + En Vivo
+
+![Build](https://img.shields.io/badge/build-GitHub%20Actions-success)
+![Data Coverage](https://img.shields.io/badge/coverage-1960--2026-blue)
+![Data Source](https://img.shields.io/badge/source-IGP%20Official-green)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 ---
 
 # 🇺🇸 English
 
-## Overview
+## 📌 Overview
 
-This project implements a cloud-automated data ingestion pipeline that continuously pulls public seismic data from official IGP (Instituto Geofisico del Peru) sources and publishes BI-ready datasets for visualization tools such as Tableau and Power BI.
+This project implements a cloud-automated data ingestion pipeline that continuously pulls public seismic data from official IGP (Instituto Geofísico del Perú) sources and publishes BI-ready datasets for Tableau and Power BI.
 
-The objective is to maintain a reliable, incremental, schema-aware public data feed suitable for real-time dashboards and analytics.
+The system merges:
 
-**Official public data source:**
+- 📚 Official historical catalog (1960–2023)
+- ⚡ Live ArcGIS REST seismic feed
 
-https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/MapServer/0
+into a unified dataset spanning multiple decades.
 
-Additional official source used by reportes-sismicos:
-
-`https://ultimosismo.igp.gob.pe/api/ultimo-sismo/ajaxb/<year>`
-
-Important data scope note:
-
-- The live ArcGIS layer is near-real-time and may expose only recent/year-to-date events.
-- The reportes-sismicos endpoint is queried by year (default range: 2020 to current year) and fills that multi-year window.
-- Optional historical CSV/XLSX can still be merged for older history (for example, 1960+ catalogs).
-
-This repository does NOT host private data.
-It consumes publicly available government data and republishes structured derivatives for analytics purposes.
+All updates run automatically in GitHub Actions — no local machine required.
 
 ---
 
-## Architecture Summary
+## 📊 Interactive Dashboard
 
-This project is a:
+🔗 **View the Live Dashboard on Tableau Public**
 
-- Data ingestion pipeline
-- Cloud-automated data feed
-- Workflow-orchestrated export system
-- Schema-change monitoring system
+https://public.tableau.com/views/ReportesSismicosPeru/Dashboard1
 
-It is NOT:
+### Preview
 
-- A custom REST API
-- A web scraping system
-- A proprietary data service
-
-The pipeline consumes an official ArcGIS REST endpoint and republishes structured CSV and GeoJSON files.
+[![Seismic Dashboard](https://public.tableau.com/static/images/Re/ReportesSismicosPeru/Dashboard1/1.png)](https://public.tableau.com/views/ReportesSismicosPeru/Dashboard1)
 
 ---
 
-## What the Pipeline Does
+## 🏗 Architecture
 
-- Incrementally pulls new seismic events using `objectid`
-- Imports year-filtered reportes-sismicos data (default: 2020..current year)
-- Optionally imports historical CSV/XLSX data and merges it with the live feed
-- Stores full history in SQLite (`raw_events` table)
-- Preserves full raw attributes JSON for auditability
-- Detects ArcGIS schema changes via metadata inspection
-- Regenerates export files on every run:
-  - `earthquakes_live.csv` (full flat feed)
-  - `earthquakes_live_curated.csv` (recommended BI feed, de-duplicated by event code)
-  - `earthquakes_live.geojson` (map feed)
-- Includes standardized timestamps:
+### High-Level Flow
+
+```
+           ┌───────────────────────────────┐
+           │  IGP Historical Catalog XLSX │
+           └──────────────┬────────────────┘
+                          │
+                          ▼
+           ┌───────────────────────────────┐
+           │  Historical Ingestion Layer   │
+           └──────────────┬────────────────┘
+                          │
+                          ▼
+┌────────────────────────────────────────────────┐
+│              SQLite Data Store                 │
+│  - raw_events                                  │
+│  - schema metadata                             │
+│  - ingestion state                             │
+└────────────────────────────────────────────────┘
+                          ▲
+                          │
+           ┌──────────────┴────────────────┐
+           │   Live ArcGIS REST Endpoint    │
+           └────────────────────────────────┘
+                          │
+                          ▼
+           ┌───────────────────────────────┐
+           │   Transformation & Validation │
+           └──────────────┬────────────────┘
+                          │
+                          ▼
+           ┌───────────────────────────────┐
+           │     Export Layer (CSV/JSON)   │
+           └──────────────┬────────────────┘
+                          │
+                          ▼
+           ┌───────────────────────────────┐
+           │   Tableau / Power BI / GIS    │
+           └───────────────────────────────┘
+```
+
+---
+
+## 🔄 What the Pipeline Does
+
+- Incrementally pulls new seismic events (`objectid`)
+- Backfills official historical catalog
+- Merges historical + live records
+- Detects schema changes
+- Normalizes timestamps:
   - `event_ts_utc`
   - `event_ts_et`
   - `event_date_et`
   - `event_time_et`
-- Automatically surfaces new source fields as `src_<fieldname>` columns
-
-If the source schema changes, the pipeline captures new fields immediately without breaking exports.
-
----
-
-## Data Privacy & Public Safety
-
-This repository:
-
-- Does not store credentials
-- Does not store personal data
-- Does not expose system secrets
-- Does not publish local file paths
-- Commits only derived public datasets
-
-Only the following are committed by automation:
-
-- CSV exports
-- GeoJSON exports
-- `state.json` (heartbeat metadata)
-
-The SQLite database file is NOT published.
+- Filters invalid timestamps
+- Regenerates curated + full exports
+- Runs automatically in the cloud
 
 ---
 
-## Running the Pipeline Locally
+## 📂 Data Sources
 
-Run once:
+### Live REST Feed
+
+https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/MapServer/0
+
+### Historical Catalog (Official Government Data)
+
+https://www.datosabiertos.gob.pe/sites/default/files/Catalogo1960_2023.xlsx
+
+---
+
+## 📦 Outputs
+
+### ✅ Curated CSV (Recommended for BI)
+
+Analytics-ready dataset:
+
+https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live_curated.csv
+
+### 📄 Full CSV
+
+Includes raw source columns:
+
+https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live.csv
+
+### 🗺 GeoJSON
+
+Geospatial-ready feed:
+
+https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live.geojson
+
+---
+
+## 🧠 Data Model (Curated Feed)
+
+| Column | Description |
+|--------|-------------|
+| objectid | Unique event identifier |
+| lat | Latitude |
+| lon | Longitude |
+| magnitud | Earthquake magnitude |
+| prof | Depth (km) |
+| event_ts_utc | UTC timestamp |
+| event_ts_et | Eastern Time timestamp |
+| event_date_et | ET date (BI-friendly) |
+| event_time_et | ET time (BI-friendly) |
+
+The curated feed excludes:
+- Null timestamps
+- Invalid datetime records
+
+---
+
+## 🤖 Automation & Monitoring
+
+### GitHub Actions Workflows
+
+- `igp-seismic-refresh.yml`
+- `igp-seismic-stale-alert.yml`
+
+### Automated Capabilities
+
+- Scheduled ingestion
+- Export regeneration
+- Heartbeat monitoring
+- Automatic GitHub alert issue creation
+- Idempotent historical ingestion
+- Ephemeral runner compatibility
+
+---
+
+## 🔐 Security & Data Integrity
+
+- No credentials stored
+- No personal data
+- SQLite database not published
+- Only derived public datasets committed
+- Schema-aware ingestion process
+- Validation during export phase
+
+---
+
+## ▶️ Run Locally (Optional)
 
 ```bash
 python3 seismic_bi_stream/igp_seismic_stream.py
 ```
 
-If TLS CA issues occur:
-
-```bash
-python3 seismic_bi_stream/igp_seismic_stream.py --insecure-skip-verify
-```
-
-Run once with historical source:
-
-```bash
-python3 seismic_bi_stream/igp_seismic_stream.py \
-  --historical-source "https://example.com/igp_historical.xlsx"
-```
-
-Run continuously (development mode only):
+Continuous development mode:
 
 ```bash
 python3 seismic_bi_stream/igp_seismic_stream.py --loop --interval-seconds 120
 ```
 
-Continuous mode is recommended only for local testing.
-Production automation is handled by GitHub Actions.
-
----
-
-## GitHub Actions (Cloud Automation)
-
-The repository includes:
-
-- `.github/workflows/igp-seismic-refresh.yml`
-- `.github/workflows/igp-seismic-stale-alert.yml`
-
-### Refresh Workflow
-
-- Runs on a schedule
-- Pulls new seismic events
-- Rebuilds export files
-- Commits updated CSV/GeoJSON
-- Updates `state.json`
-
-No local machine is required for updates.
-
-### Enable full history in GitHub Actions
-
-In GitHub:
-
-1. `Settings` -> `Secrets and variables` -> `Actions` -> `Variables`
-2. Add `IGP_HISTORICAL_SOURCE_URL` = `<public historical CSV/XLSX URL>`
-3. Optional: add `IGP_HISTORICAL_REFRESH_HOURS` = `24`
-4. Optional historical year bounds:
-   - `IGP_HISTORICAL_START_YEAR` (example: `1960`)
-   - `IGP_HISTORICAL_END_YEAR` (example: `2020`)
-5. Optional reportes controls:
-   - `IGP_REPORTES_BASE_URL` (default: `https://ultimosismo.igp.gob.pe/api/ultimo-sismo/ajaxb`)
-   - `IGP_REPORTES_START_YEAR` (default: `2020`)
-   - `IGP_REPORTES_END_YEAR` (default: current year)
-   - `IGP_REPORTES_REFRESH_HOURS` (default: `24`)
-6. Run `Refresh IGP Seismic Feed` once manually
-7. Verify `earthquakes_live_curated.csv` includes expected years
-
-Recommended variable set for:
-- Historical catalog: 1960..2020
-- Reportes endpoint: 2020..2026
-- Live ArcGIS updates for latest events
-
-```
-IGP_HISTORICAL_SOURCE_URL=https://www.datosabiertos.gob.pe/sites/default/files/Catalogo1960_2023.xlsx
-IGP_HISTORICAL_START_YEAR=1960
-IGP_HISTORICAL_END_YEAR=2020
-IGP_REPORTES_START_YEAR=2020
-IGP_REPORTES_END_YEAR=2026
-```
-
-If `IGP_HISTORICAL_SOURCE_URL` is empty, the workflow runs live-only mode.
-
-If historical import fails, the workflow still publishes live data and records:
-- `historical_last_error`
-- `historical_last_error_utc`
-in `seismic_bi_stream/data/state.json`.
-
-Example official historical source:
-
-`https://www.datosabiertos.gob.pe/sites/default/files/Catalogo1960_2023.xlsx`
-
----
-
-## Monitoring & Control
-
-### Stale Feed Alert
-
-The workflow `igp-seismic-stale-alert.yml`:
-
-- Checks `state.json` every 10 minutes
-- If `last_run_utc` is older than 30 minutes:
-  - Opens a GitHub issue:
-    `[Alert] IGP seismic feed heartbeat stale`
-- Automatically closes the alert issue if the feed recovers
-
-To change alert sensitivity, modify:
-
-`STALE_MINUTES`
-
-inside:
-
-`.github/workflows/igp-seismic-stale-alert.yml`
-
----
-
-## Output Files
-
-Generated files:
-
-- `seismic_bi_stream/data/state.json`
-- `seismic_bi_stream/exports/earthquakes_live.csv`
-- `seismic_bi_stream/exports/earthquakes_live_curated.csv`
-- `seismic_bi_stream/exports/earthquakes_live_preview.csv`
-- `seismic_bi_stream/exports/earthquakes_live.geojson`
-
-Recommended BI feed (clean and de-duplicated):
-
-https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live_curated.csv
-
-Preview file for fast GitHub/browser inspection (latest subset):
-
-https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live_preview.csv
-
----
-
-## BI Field Dictionary (`earthquakes_live_curated.csv`)
-
-Use these data types in Power BI/Tableau:
-
-- `objectid`: Whole Number (surrogate id)
-- `code`: Text (event code when available)
-- `event_ts_et`: Date/Time (US Eastern Time)
-- `event_date_et`: Date
-- `event_time_et`: Time
-- `event_ts_utc`: Date/Time (UTC)
-- `lat`: Decimal Number (Latitude)
-- `lon`: Decimal Number (Longitude)
-- `magnitud`: Decimal Number
-- `prof`: Whole Number (depth in km)
-- `profundidad`: Text (depth class from source)
-- `intensidad`: Text
-- `departamento`: Text
-- `referencia`: Text
-- `ultimo`: Whole Number (source flag)
-- `reporte`: Whole Number (source report number)
-- `ingested_at_utc`: Date/Time (pipeline load timestamp)
-
-Recommended semantic roles:
-
-- `lat` -> Latitude
-- `lon` -> Longitude
-- Primary timeline -> `event_ts_et` (for ET audiences) or `event_ts_utc` (for UTC-standard reporting)
-
----
-
-## Releases
-
-### 2026-02-16 - Historical + ET BI Feed Stabilization
-
-- Added historical backfill support from public CSV/XLSX sources.
-- Enabled direct ingestion of official IGP historical catalog (`Catalogo1960_2023.xlsx`).
-- Added ingestion from official reportes-sismicos yearly endpoint (`/api/ultimo-sismo/ajaxb/<year>`) for 2020+ coverage.
-- Added optional historical year bounds (`IGP_HISTORICAL_START_YEAR`, `IGP_HISTORICAL_END_YEAR`).
-- Added optional reportes controls (`IGP_REPORTES_START_YEAR`, `IGP_REPORTES_END_YEAR`) to shape overlap with live feed.
-- Added departamento enrichment for reportes rows by parsing source location references.
-- Merged live ArcGIS feed + historical catalog into a single curated export.
-- Added robust parsing for compact UTC fields from historical files (e.g., `FECHA_UTC`, `HORA_UTC`).
-- Kept ET-ready fields in curated output: `event_ts_et`, `event_date_et`, `event_time_et`.
-- Enforced historical refresh when runner DB is empty (important for ephemeral GitHub Actions runners).
-- Curated export now excludes rows with blank `event_ts_utc`.
-- Added `earthquakes_live_preview.csv` (small latest subset for fast preview and sharing).
-- Current validated coverage in curated feed: `1960` to `2026`.
-
----
-
-## Connecting to Tableau
-
-1. Connect -> Text File
-2. Select `earthquakes_live_curated.csv`
-3. Assign geospatial roles:
-   - `lat` -> Latitude
-   - `lon` -> Longitude
-4. Use `event_ts_et` for time axis
-
-If using public URL hosting, use text/web-hosted CSV refresh options available in your Tableau environment.
-
----
-
-## Connecting to Power BI
-
-1. Get Data -> Text/CSV (or Web for raw GitHub URL)
-2. Select curated CSV
-3. Set `lat` / `lon` data categories
-4. Publish to Power BI Service
-5. Enable scheduled refresh
+Production automation handled by GitHub Actions.
 
 ---
 
 # 🇪🇸 Español
 
-## Descripcion General
+## 📌 Descripción General
 
-Este proyecto implementa un pipeline automatizado en la nube que consume datos sismicos publicos desde el servicio oficial ArcGIS REST del IGP y publica datasets estructurados listos para Tableau y Power BI.
+Este proyecto implementa un pipeline automatizado en la nube que consume datos sísmicos oficiales del IGP y publica datasets listos para análisis en Tableau y Power BI.
 
-Fuente oficial publica:
+Integra:
 
-https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/MapServer/0
+- 📚 Catálogo histórico oficial (1960–2023)
+- ⚡ Feed en vivo vía ArcGIS REST
 
-Nota de alcance:
-
-- La capa ArcGIS en vivo puede incluir solo eventos recientes/del ano en curso.
-- Para historial completo, configure una fuente historica CSV/XLSX y el pipeline hara merge con el feed en vivo.
+en un dataset continuo de múltiples décadas.
 
 ---
 
-## Que Hace el Pipeline
+## 🏗 Arquitectura
 
-- Descarga eventos sismicos incrementalmente usando `objectid`
-- Puede importar una fuente historica CSV/XLSX y combinarla con el feed en vivo
-- Guarda historial en SQLite (`raw_events`)
-- Preserva atributos originales en JSON
-- Detecta cambios en el esquema del ArcGIS
-- Regenera:
-  - `earthquakes_live.csv`
-  - `earthquakes_live_curated.csv`
-  - `earthquakes_live.geojson`
+El sistema:
 
-No se requiere que una computadora local este encendida cuando GitHub Actions esta activo.
+- Integra datos históricos + en vivo
+- Normaliza timestamps
+- Detecta cambios de esquema
+- Publica CSV y GeoJSON
+- Se ejecuta automáticamente en la nube
+
+---
+
+## 📊 Dashboard
+
+🔗 https://public.tableau.com/views/ReportesSismicosPeru/Dashboard1
+
+---
+
+## 📦 Archivos Generados
+
+- CSV Curado
+- CSV Completo
+- GeoJSON
+- Metadata de estado (`state.json`)
+
+---
+
+## 🔐 Seguridad
+
+- No contiene credenciales
+- No almacena datos personales
+- Solo publica datos derivados de fuentes oficiales públicas
+- Compatible con ejecución CI/CD en entornos efímeros
