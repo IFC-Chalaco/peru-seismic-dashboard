@@ -32,10 +32,6 @@ All updates run automatically in GitHub Actions — no local machine required.
 
 https://public.tableau.com/views/ReportesSismicosPeru/Dashboard1
 
-### Preview
-
-[![Seismic Dashboard](https://public.tableau.com/static/images/Re/ReportesSismicosPeru/Dashboard1/1.png)](https://public.tableau.com/views/ReportesSismicosPeru/Dashboard1)
-
 ---
 
 ## 🏗 Architecture
