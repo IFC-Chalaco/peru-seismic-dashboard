@@ -114,6 +114,29 @@ def normalize_key(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value).lower())
 
 
+def canonical_event_code(value: Any) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip().upper()
+    if not raw:
+        return None
+
+    normalized = re.sub(r"\s+", "", raw).replace("/", "-").replace("_", "-")
+    normalized = re.sub(r"-{2,}", "-", normalized).strip("-")
+    if not normalized:
+        return None
+
+    match_hyphen = re.fullmatch(r"(\d{4})-0*([0-9]{1,6})", normalized)
+    if match_hyphen:
+        return f"{match_hyphen.group(1)}-{int(match_hyphen.group(2))}"
+
+    match_compact = re.fullmatch(r"(\d{4})([0-9]{1,6})", normalized)
+    if match_compact:
+        return f"{match_compact.group(1)}-{int(match_compact.group(2))}"
+
+    return normalized
+
+
 def build_row_key_map(row: dict[str, Any]) -> dict[str, str]:
     key_map: dict[str, str] = {}
     for key in row.keys():
@@ -1902,8 +1925,9 @@ def export_curated_csv(
         exported_rows = 0
         for row in rows:
             code_value = str(row["code"]).strip() if row["code"] is not None else ""
-            if code_value:
-                dedupe_key: tuple[Any, ...] = ("code", code_value.upper())
+            canonical_code = canonical_event_code(code_value)
+            if canonical_code:
+                dedupe_key: tuple[Any, ...] = ("code", canonical_code)
             else:
                 dedupe_key = (
                     "fallback",
@@ -1923,7 +1947,7 @@ def export_curated_csv(
             writer.writerow(
                 {
                     "objectid": row["objectid"],
-                    "code": row["code"],
+                    "code": canonical_code if canonical_code else row["code"],
                     "event_ts_et": event_ts_et,
                     "event_date_et": event_date_et,
                     "event_time_et": event_time_et,
