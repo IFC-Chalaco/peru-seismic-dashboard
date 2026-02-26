@@ -1,6 +1,6 @@
 {
-  "historical_last_refresh_et": "2026-02-26T16:50:47-05:00",
-  "historical_last_refresh_utc": "2026-02-26T21:50:47Z",
+  "historical_last_refresh_et": "2026-02-26T17:19:43-05:00",
+  "historical_last_refresh_utc": "2026-02-26T22:19:43Z",
   "historical_source": "https://www.datosabiertos.gob.pe/sites/default/files/Catalogo1960_2023.xlsx",
   "known_fields": {
     "code": "esriFieldTypeString",
@@ -24,11 +24,11 @@
     "ultimo": "esriFieldTypeString"
   },
   "last_objectid": 1759,
-  "last_run_et": "2026-02-26T16:50:50-05:00",
-  "last_run_utc": "2026-02-26T21:50:50Z",
+  "last_run_et": "2026-02-26T17:19:47-05:00",
+  "last_run_utc": "2026-02-26T22:19:47Z",
   "reportes_base_url": "https://ultimosismo.igp.gob.pe/api/ultimo-sismo/ajaxb",
   "reportes_end_year": 2026,
-  "reportes_last_refresh_et": "2026-02-26T16:50:49-05:00",
-  "reportes_last_refresh_utc": "2026-02-26T21:50:49Z",
+  "reportes_last_refresh_et": "2026-02-26T17:19:45-05:00",
+  "reportes_last_refresh_utc": "2026-02-26T22:19:45Z",
   "reportes_start_year": 2020
 }
