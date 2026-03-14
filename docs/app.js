@@ -541,8 +541,8 @@ function renderScatterPlot(rows) {
     ? `${formatNumber(sampledRows.length)} sampled points colored by magnitude band and RAG category`
     : "No depth values are available in the current filtered slice";
   elements["depth-heatmap-note"].textContent = heatmap.topCell
-    ? `Cells show % within each depth band. Strongest concentration: ${heatmap.topCell.magnitudeLabel} at ${heatmap.topCell.depthLabel} (${(heatmap.topCell.rowShare * 100).toFixed(1)}%)`
-    : "No depth-band pattern data is available";
+    ? `Peak cell: ${heatmap.topCell.magnitudeLabel} · ${heatmap.topCell.depthLabel} · ${(heatmap.topCell.rowShare * 100).toFixed(1)}%`
+    : "No depth-band pattern data";
 }
 
 function renderScatterLegend(container, rows) {
@@ -588,7 +588,7 @@ function renderBubbleChart(rows) {
   const maxCount = ranked[0].count || 1;
   const items = ranked.map((item) => ({
     ...item,
-    radius: 26 + Math.sqrt(item.count / maxCount) * 92,
+    radius: 28 + Math.sqrt(item.count / maxCount) * 84,
   }));
   const bubbles = layoutBubbles(items, width, height);
   drawBubbleChart(svg, bubbles, maxCount);
@@ -1094,7 +1094,7 @@ function drawDepthHeatmap(svg, heatmap) {
 
   const width = 700;
   const height = 320;
-  const pad = { top: 20, right: 18, bottom: 96, left: 96 };
+  const pad = { top: 18, right: 16, bottom: 86, left: 90 };
   const innerWidth = width - pad.left - pad.right;
   const innerHeight = height - pad.top - pad.bottom;
   const colWidth = innerWidth / heatmap.magnitudeBins.length;
@@ -1115,7 +1115,7 @@ function drawDepthHeatmap(svg, heatmap) {
     const lines = splitAxisLabel(magnitudeBin.label);
     const label = svgNode("text", {
       x,
-      y: pad.top + innerHeight + 24 - (lines.length > 1 ? 6 : 0),
+      y: pad.top + innerHeight + 20 - (lines.length > 1 ? 6 : 0),
       class: "axis-text heatmap-axis-label",
       "text-anchor": "middle",
     });
@@ -1166,7 +1166,7 @@ function drawDepthHeatmap(svg, heatmap) {
 
   svg.appendChild(svgNode("text", {
     x: width / 2,
-    y: height - 8,
+    y: height - 12,
     class: "axis-title",
     "text-anchor": "middle",
   }, "Magnitude band"));
@@ -1192,9 +1192,9 @@ function drawBubbleChart(svg, bubbles, maxCount) {
       cy: bubble.y,
       r: bubble.radius,
       fill: bubble.color,
-      "fill-opacity": 0.96,
-      stroke: "rgba(255,255,255,0.92)",
-      "stroke-width": 2,
+      "fill-opacity": 0.92,
+      stroke: "rgba(22, 40, 48, 0.22)",
+      "stroke-width": 1.4,
       class: "bubble-node",
     });
     attachTooltip(circle, (event) => {
@@ -1210,10 +1210,11 @@ function drawBubbleChart(svg, bubbles, maxCount) {
     svg.appendChild(circle);
 
     const label = splitBubbleLabel(bubble.label);
-    const fontSize = Math.max(11, Math.min(22, bubble.radius / 3.1));
+    const fontSize = Math.max(10, Math.min(20, bubble.radius / 3.25));
+    const showCount = bubble.radius >= 40;
     const text = svgNode("text", {
       x: bubble.x,
-      y: bubble.y - 6,
+      y: bubble.y - (showCount ? 8 : 4),
       class: "bubble-label",
       "text-anchor": "middle",
       "font-size": fontSize,
@@ -1224,22 +1225,37 @@ function drawBubbleChart(svg, bubbles, maxCount) {
         dy: lineIndex === 0 ? 0 : fontSize * 1.05,
       }, line));
     });
-    text.appendChild(svgNode("tspan", {
-      x: bubble.x,
-      dy: fontSize * 1.12,
-      class: "bubble-count",
-    }, formatNumber(bubble.count)));
+    if (showCount) {
+      text.appendChild(svgNode("tspan", {
+        x: bubble.x,
+        dy: fontSize * 1.12,
+        class: "bubble-count",
+      }, formatNumber(bubble.count)));
+    }
     svg.appendChild(text);
   });
 }
 
 function layoutBubbles(items, width, height) {
   const placed = [];
-  const leadX = Math.max(items[0]?.radius + 24 || 0, width * 0.2);
-  const leadY = height * 0.5;
-  const clusterX = width * 0.62;
-  const clusterY = height * 0.5;
-  const margin = 16;
+  const leadX = Math.max(items[0]?.radius + 18 || 0, width * 0.18);
+  const leadY = height * 0.53;
+  const clusterX = width * 0.58;
+  const clusterY = height * 0.53;
+  const margin = 14;
+  const preferredOffsets = [
+    { x: 12, y: -112 },
+    { x: 132, y: -48 },
+    { x: 234, y: 12 },
+    { x: 118, y: 104 },
+    { x: -48, y: 62 },
+    { x: 216, y: 122 },
+    { x: 84, y: 170 },
+    { x: -18, y: 156 },
+    { x: 300, y: 126 },
+    { x: 286, y: 26 },
+    { x: 156, y: -138 },
+  ];
 
   items.forEach((item, index) => {
     if (index === 0) {
@@ -1248,11 +1264,14 @@ function layoutBubbles(items, width, height) {
     }
 
     let position = null;
-    for (let spiral = 0; spiral < 520 && !position; spiral += 1) {
-      const angle = spiral * 0.48;
-      const distance = item.radius + 16 + spiral * 2.2;
-      const x = clusterX + Math.cos(angle) * distance * 1.26;
-      const y = clusterY + Math.sin(angle) * distance * 0.84;
+    const preferred = preferredOffsets[index - 1];
+    const anchorX = preferred ? clusterX + preferred.x * (width / 700) : clusterX;
+    const anchorY = preferred ? clusterY + preferred.y * (height / 430) : clusterY;
+    for (let spiral = 0; spiral < 420 && !position; spiral += 1) {
+      const angle = spiral * 0.72;
+      const distance = spiral === 0 ? 0 : 6 + spiral * 1.9;
+      const x = anchorX + Math.cos(angle) * distance * 1.02;
+      const y = anchorY + Math.sin(angle) * distance * 0.82;
       if (x - item.radius < margin || x + item.radius > width - margin) {
         continue;
       }
@@ -1267,8 +1286,8 @@ function layoutBubbles(items, width, height) {
     if (!position) {
       position = {
         ...item,
-        x: Math.min(width - item.radius - margin, clusterX + (index % 4) * 86),
-        y: Math.min(height - item.radius - margin, margin + item.radius + Math.floor(index / 4) * 88),
+        x: Math.min(width - item.radius - margin, clusterX + (index % 4) * 74),
+        y: Math.min(height - item.radius - margin, margin + item.radius + Math.floor(index / 4) * 78),
       };
     }
     placed.push(position);

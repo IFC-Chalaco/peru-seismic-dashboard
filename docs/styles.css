@@ -321,6 +321,24 @@ select {
   background: rgba(255, 255, 255, 0.44);
 }
 
+.tight-series {
+  padding: 14px 14px 12px;
+}
+
+.tight-series .mini-series-head {
+  gap: 12px;
+}
+
+.tight-series .mini-series-head h3 {
+  font-size: 1.36rem;
+}
+
+.tight-series .mini-series-head p {
+  margin: 0;
+  max-width: 320px;
+  line-height: 1.4;
+}
+
 .svg-wrap {
   margin-top: 14px;
   border: 1px solid var(--line);
@@ -331,6 +349,10 @@ select {
 
 .svg-wrap.compact {
   margin-top: 12px;
+}
+
+.tight-series .svg-wrap.compact {
+  margin-top: 8px;
 }
 
 .bubble-wrap {
@@ -546,7 +568,7 @@ tbody tr:hover {
 }
 
 .heatmap-axis-label {
-  font-size: 11px;
+  font-size: 10.5px;
 }
 
 .axis-title {
