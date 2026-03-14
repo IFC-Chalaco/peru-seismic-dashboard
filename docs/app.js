@@ -381,7 +381,7 @@ function applyFilters() {
   renderOccurrenceSeries(state.filteredRows, startDate, endDate);
   renderMonthYearSeries(state.scopedRows);
   renderScatterPlot(state.filteredRows);
-  renderBubbleChart(state.scopedRows);
+  renderBubbleChart(state.filteredRows);
   renderMap();
   renderRecentEvents();
 }
@@ -579,7 +579,7 @@ function renderBubbleChart(rows) {
   if (!ranked.length) {
     clearSvg(svg);
     svg.appendChild(emptyText(svg, "No department distribution available."));
-    elements["bubble-note"].textContent = "No bubbles to show.";
+    elements["bubble-note"].textContent = "No departamentos match the current filter.";
     return;
   }
 
@@ -592,7 +592,7 @@ function renderBubbleChart(rows) {
   }));
   const bubbles = layoutBubbles(items, width, height);
   drawBubbleChart(svg, bubbles, maxCount);
-  elements["bubble-note"].textContent = `Top ${ranked.length} departamentos in the current department and magnitude scope`;
+  elements["bubble-note"].textContent = `Top ${ranked.length} departamentos in the current filtered slice`;
 }
 
 function renderMap() {
