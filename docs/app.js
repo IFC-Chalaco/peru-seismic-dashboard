@@ -95,8 +95,8 @@ function cacheElements() {
     "scatter-chart",
     "scatter-note",
     "scatter-legend",
-    "time-scatter-chart",
-    "time-scatter-note",
+    "depth-heatmap-chart",
+    "depth-heatmap-note",
     "bubble-chart",
     "bubble-note",
     "map-note",
@@ -504,7 +504,7 @@ function renderMonthYearSeries(rows) {
 
 function renderScatterPlot(rows) {
   const svg = elements["scatter-chart"];
-  const timeSvg = elements["time-scatter-chart"];
+  const heatmapSvg = elements["depth-heatmap-chart"];
   const legend = elements["scatter-legend"];
   legend.innerHTML = "";
 
@@ -512,20 +512,19 @@ function renderScatterPlot(rows) {
   const validRows = magnitudeRows.filter((row) => Number.isFinite(row.prof));
   if (!magnitudeRows.length) {
     clearSvg(svg);
-    clearSvg(timeSvg);
+    clearSvg(heatmapSvg);
     svg.appendChild(emptyText(svg, "No magnitude/depth pairs in the filtered slice."));
-    timeSvg.appendChild(emptyText(timeSvg, "No time scatter data in the filtered slice."));
+    heatmapSvg.appendChild(emptyText(heatmapSvg, "No depth-band pattern data in the filtered slice."));
     elements["scatter-note"].textContent = "No scatterplot data.";
-    elements["time-scatter-note"].textContent = "No time scatter data.";
+    elements["depth-heatmap-note"].textContent = "No heatmap data.";
     return;
   }
 
   const sampledRows = validRows.length ? sampleRows(validRows, SCATTER_LIMIT) : [];
-  const timeSampledRows = sampleRows(magnitudeRows, SCATTER_LIMIT);
   const depthMax = sampledRows.length ? Math.max(10, niceCeiling(percentile(sampledRows.map((row) => row.prof), 0.98), 10)) : 10;
-  const magMax = Math.max(4, niceCeiling(Math.max(...timeSampledRows.map((row) => row.magnitud)), 1));
-  const chronologicalRows = [...timeSampledRows].sort((left, right) => left.eventMs - right.eventMs);
-  renderScatterLegend(legend, timeSampledRows);
+  const magMax = Math.max(4, niceCeiling(Math.max(...magnitudeRows.map((row) => row.magnitud)), 1));
+  const heatmap = buildDepthMagnitudeHeatmap(validRows);
+  renderScatterLegend(legend, magnitudeRows);
   if (sampledRows.length) {
     drawScatterPlot(svg, sampledRows, {
       xMax: depthMax,
@@ -537,14 +536,13 @@ function renderScatterPlot(rows) {
     clearSvg(svg);
     svg.appendChild(emptyText(svg, "No magnitude/depth pairs in the filtered slice."));
   }
-  drawTimeScatterPlot(timeSvg, chronologicalRows, {
-    yMax: magMax,
-    yLabel: "Magnitude",
-  });
+  drawDepthHeatmap(heatmapSvg, heatmap);
   elements["scatter-note"].textContent = sampledRows.length
     ? `${formatNumber(sampledRows.length)} sampled points colored by magnitude band and RAG category`
     : "No depth values are available in the current filtered slice";
-  elements["time-scatter-note"].textContent = "Shows when stronger earthquakes cluster within the filtered time window";
+  elements["depth-heatmap-note"].textContent = heatmap.topCell
+    ? `Largest cluster: ${heatmap.topCell.magnitudeLabel} magnitude events at ${heatmap.topCell.depthLabel} depth`
+    : "No depth-band pattern data is available";
 }
 
 function renderScatterLegend(container, rows) {
@@ -813,6 +811,52 @@ function buildRollingAverageSeries(series, windowSize) {
   });
 }
 
+function buildDepthMagnitudeHeatmap(rows) {
+  const depthBins = [
+    { label: "0-30 km", min: 0, max: 30 },
+    { label: "30-70 km", min: 30, max: 70 },
+    { label: "70-150 km", min: 70, max: 150 },
+    { label: "150-300 km", min: 150, max: 300 },
+    { label: "300+ km", min: 300, max: Infinity },
+  ];
+  const magnitudeBins = MAG_BANDS.map((band) => ({
+    label: band.label,
+    min: band === MAG_BANDS[0] ? 0 : 0,
+    maxExclusive: band.maxExclusive,
+    color: band.color,
+  }));
+
+  const cells = depthBins.map((depthBin) =>
+    magnitudeBins.map((magnitudeBin) => ({
+      depthLabel: depthBin.label,
+      magnitudeLabel: magnitudeBin.label,
+      magnitudeColor: magnitudeBin.color,
+      count: 0,
+    }))
+  );
+
+  rows.forEach((row) => {
+    const depthIndex = depthBins.findIndex((bin) => row.prof >= bin.min && row.prof < bin.max);
+    const magnitudeIndex = MAG_BANDS.findIndex((band) => row.magnitud < band.maxExclusive);
+    if (depthIndex === -1 || magnitudeIndex === -1) {
+      return;
+    }
+    cells[depthIndex][magnitudeIndex].count += 1;
+  });
+
+  const flat = cells.flat();
+  const maxCount = Math.max(...flat.map((cell) => cell.count), 0);
+  const topCell = flat.filter((cell) => cell.count > 0).sort((left, right) => right.count - left.count)[0] || null;
+
+  return {
+    depthBins,
+    magnitudeBins,
+    cells,
+    maxCount,
+    topCell,
+  };
+}
+
 function buildYearBuckets(rows) {
   if (!rows.length) {
     return [];
@@ -1029,81 +1073,77 @@ function drawScatterPlot(svg, rows, options) {
   }, options.yLabel));
 }
 
-function drawTimeScatterPlot(svg, rows, options) {
+function drawDepthHeatmap(svg, heatmap) {
   clearSvg(svg);
-  if (!rows.length) {
-    svg.appendChild(emptyText(svg, "No time scatter data available."));
+  if (!heatmap.maxCount) {
+    svg.appendChild(emptyText(svg, "No depth-band pattern data available."));
     return;
   }
 
   const width = 700;
   const height = 320;
-  const pad = { top: 20, right: 18, bottom: 52, left: 58 };
+  const pad = { top: 20, right: 18, bottom: 78, left: 96 };
   const innerWidth = width - pad.left - pad.right;
   const innerHeight = height - pad.top - pad.bottom;
-  const minMs = rows[0].eventMs;
-  const maxMs = rows[rows.length - 1].eventMs;
-  const rangeMs = Math.max(1, maxMs - minMs);
-  const xScale = (value) => pad.left + ((value - minMs) / rangeMs) * innerWidth;
-  const yScale = (value) => pad.top + innerHeight - (value / options.yMax) * innerHeight;
+  const colWidth = innerWidth / heatmap.magnitudeBins.length;
+  const rowHeight = innerHeight / heatmap.depthBins.length;
 
-  for (let index = 0; index <= 4; index += 1) {
-    const y = pad.top + (innerHeight / 4) * index;
-    const value = (options.yMax / 4) * (4 - index);
-    svg.appendChild(svgNode("line", {
-      x1: pad.left,
-      x2: width - pad.right,
-      y1: y,
-      y2: y,
-      class: "grid-line",
-    }));
+  heatmap.depthBins.forEach((depthBin, rowIndex) => {
+    const y = pad.top + rowIndex * rowHeight;
     svg.appendChild(svgNode("text", {
-      x: pad.left - 10,
-      y: y + 4,
+      x: pad.left - 12,
+      y: y + rowHeight / 2 + 4,
       class: "axis-text",
       "text-anchor": "end",
-    }, value.toFixed(1)));
-  }
+    }, depthBin.label));
+  });
 
-  for (let index = 0; index <= 5; index += 1) {
-    const ms = minMs + (rangeMs / 5) * index;
-    const x = pad.left + (innerWidth / 5) * index;
-    svg.appendChild(svgNode("line", {
-      x1: x,
-      x2: x,
-      y1: pad.top,
-      y2: height - pad.bottom,
-      class: "grid-line",
-    }));
-    svg.appendChild(svgNode("text", {
+  heatmap.magnitudeBins.forEach((magnitudeBin, colIndex) => {
+    const x = pad.left + colIndex * colWidth + colWidth / 2;
+    const label = svgNode("text", {
       x,
-      y: height - 16,
+      y: height - 18,
       class: "axis-text",
-      "text-anchor": "middle",
-    }, timeAxisLabel(ms, rangeMs)));
-  }
+      "text-anchor": "end",
+      transform: `rotate(-32 ${x} ${height - 18})`,
+    }, magnitudeBin.label);
+    svg.appendChild(label);
+  });
 
-  rows.forEach((row) => {
-    const point = svgNode("circle", {
-      cx: xScale(row.eventMs),
-      cy: yScale(row.magnitud),
-      r: Math.max(3.5, Math.min(8.5, 3 + (Number.isFinite(row.prof) ? Math.min(row.prof, 180) / 60 : 0))),
-      fill: row.bandColor,
-      "fill-opacity": 0.78,
-      stroke: "#17313e",
-      "stroke-width": 0.6,
-      class: "scatter-point",
+  heatmap.cells.forEach((row, rowIndex) => {
+    row.forEach((cell, colIndex) => {
+      const x = pad.left + colIndex * colWidth;
+      const y = pad.top + rowIndex * rowHeight;
+      const opacity = cell.count > 0 ? 0.12 + (cell.count / heatmap.maxCount) * 0.88 : 0.06;
+      const rect = svgNode("rect", {
+        x: x + 1,
+        y: y + 1,
+        width: colWidth - 2,
+        height: rowHeight - 2,
+        rx: 8,
+        fill: cell.magnitudeColor,
+        "fill-opacity": opacity.toFixed(3),
+        stroke: "rgba(22, 40, 48, 0.08)",
+        "stroke-width": 1,
+      });
+      attachTooltip(rect, (event) => {
+        showTooltip(
+          event,
+          tooltipMarkup(
+            `${escapeHtml(cell.magnitudeLabel)} · ${escapeHtml(cell.depthLabel)}`,
+            `${formatNumber(cell.count)} earthquakes in this depth-magnitude cell`
+          )
+        );
+      });
+      svg.appendChild(rect);
+
+      svg.appendChild(svgNode("text", {
+        x: x + colWidth / 2,
+        y: y + rowHeight / 2 + 4,
+        class: "axis-text",
+        "text-anchor": "middle",
+      }, cell.count > 0 ? formatNumber(cell.count) : ""));
     });
-    attachTooltip(point, (event) => {
-      showTooltip(
-        event,
-        tooltipMarkup(
-          `${escapeHtml(row.code || "Earthquake")} · ${escapeHtml(row.magnitudeBand)}`,
-          `${escapeHtml(formatTemporalLabel(row.event_date_et))}<br />Magnitude ${row.magnitud.toFixed(1)}<br />${Number.isFinite(row.prof) ? `Depth ${row.prof} km` : "Depth unavailable"} · ${escapeHtml(row.departamento || "Unknown")}`
-        )
-      );
-    });
-    svg.appendChild(point);
   });
 
   svg.appendChild(svgNode("text", {
@@ -1111,14 +1151,14 @@ function drawTimeScatterPlot(svg, rows, options) {
     y: height - 2,
     class: "axis-title",
     "text-anchor": "middle",
-  }, "Event date (ET)"));
+  }, "Magnitude band"));
   svg.appendChild(svgNode("text", {
     x: 18,
     y: pad.top + innerHeight / 2,
     class: "axis-title",
     transform: `rotate(-90 18 ${pad.top + innerHeight / 2})`,
     "text-anchor": "middle",
-  }, options.yLabel));
+  }, "Depth band"));
 }
 
 function drawBubbleChart(svg, bubbles, maxCount) {
@@ -1450,17 +1490,6 @@ function shortMonthLabel(isoMonth) {
     timeZone: "UTC",
   });
   return label.replace(" ", " '");
-}
-
-function timeAxisLabel(ms, rangeMs) {
-  const date = new Date(ms);
-  if (rangeMs <= 1000 * 60 * 60 * 24 * 45) {
-    return date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-  }
-  if (rangeMs <= 1000 * 60 * 60 * 24 * 550) {
-    return date.toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" }).replace(" ", " '");
-  }
-  return date.toLocaleDateString("en-US", { year: "numeric", timeZone: "UTC" });
 }
 
 function shiftIsoDate(isoDate, deltaDays) {

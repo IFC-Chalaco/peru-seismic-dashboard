@@ -346,7 +346,7 @@ select {
 #occurrence-chart,
 #rolling-chart,
 #scatter-chart,
-#time-scatter-chart {
+#depth-heatmap-chart {
   height: 280px;
 }
 
@@ -692,7 +692,7 @@ code {
   #occurrence-chart,
   #rolling-chart,
   #scatter-chart,
-  #time-scatter-chart,
+  #depth-heatmap-chart,
   #month-chart,
   #year-chart {
     height: 260px;
