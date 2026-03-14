@@ -77,7 +77,7 @@ select {
 .hero {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(260px, 0.9fr);
+  grid-template-columns: minmax(0, 1.7fr) minmax(220px, 0.72fr);
   gap: 22px;
   overflow: hidden;
 }
@@ -171,30 +171,42 @@ select {
 
 .hero-status {
   display: grid;
-  gap: 14px;
+  justify-self: end;
+  max-width: 330px;
+  align-content: start;
+  gap: 18px;
+  padding-top: 10px;
 }
 
-.status-card,
 .summary-card {
   border: 1px solid var(--line);
   border-radius: 18px;
   background: var(--panel-strong);
 }
 
-.status-card strong,
+.status-note strong,
 .summary-card strong {
   display: block;
-  margin-top: 10px;
+  margin-top: 8px;
   font-size: 1.3rem;
   line-height: 1.2;
 }
 
-.status-card p,
+.status-note p,
 .summary-card p,
 .muted-text {
   margin: 8px 0 0;
   color: var(--muted);
   line-height: 1.5;
+}
+
+.status-note {
+  padding-left: 14px;
+  border-left: 2px solid rgba(14, 122, 108, 0.18);
+}
+
+.status-note code {
+  font-size: 0.92em;
 }
 
 .summary-grid {
@@ -266,7 +278,7 @@ select {
 
 .filter-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
   margin-top: 20px;
 }
@@ -290,10 +302,6 @@ select {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.84);
-}
-
-.field input[type="range"] {
-  padding: 0;
 }
 
 .control-actions {

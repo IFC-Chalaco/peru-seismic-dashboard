@@ -25,17 +25,16 @@
         <p class="hero-credit">Created by: Carlos Guanilo</p>
         <div class="hero-actions">
           <a class="btn btn-primary" href="https://github.com/IFC-Chalaco/peru-seismic-dashboard" target="_blank" rel="noreferrer">Open repository</a>
-          <a class="btn btn-secondary" href="https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live.geojson" target="_blank" rel="noreferrer">Open GeoJSON feed</a>
         </div>
       </div>
 
       <div class="hero-status">
-        <div class="status-card">
+        <div class="status-note">
           <span class="status-label">Site sync</span>
           <strong id="generated-at">Loading data...</strong>
           <p id="coverage-text">Waiting for published metadata</p>
         </div>
-        <div class="status-card">
+        <div class="status-note">
           <span class="status-label">Published feed</span>
           <strong id="row-count">-</strong>
           <p id="source-text">Curated CSV mirrored into <code>/docs/data</code></p>
@@ -102,10 +101,6 @@
           <select id="department-select">
             <option value="">All departments</option>
           </select>
-        </label>
-        <label class="field">
-          <span>Minimum magnitude <strong id="min-mag-value">0.0</strong></span>
-          <input id="min-magnitude" type="range" min="0" max="9" step="0.1" value="0" />
         </label>
       </div>
 

@@ -67,8 +67,6 @@ function cacheElements() {
     "start-date",
     "end-date",
     "department-select",
-    "min-magnitude",
-    "min-mag-value",
     "apply-filters",
     "reset-filters",
     "download-filtered",
@@ -157,13 +155,10 @@ function bindEvents() {
     state.activeRange = "ytd";
     syncQuickRangeButtons();
     elements["department-select"].value = "";
-    elements["min-magnitude"].value = "0";
-    updateMinMagnitudeLabel();
     applyQuickRange();
     applyFilters();
   });
 
-  elements["min-magnitude"].addEventListener("input", updateMinMagnitudeLabel);
   elements["download-filtered"].addEventListener("click", downloadFilteredCsv);
 }
 
@@ -179,7 +174,6 @@ async function loadDashboard() {
 
   hydrateMeta();
   populateFilterOptions();
-  updateMinMagnitudeLabel();
   syncQuickRangeButtons();
   applyQuickRange();
   applyFilters();
@@ -350,16 +344,9 @@ function applyFilters() {
   }
 
   const department = elements["department-select"].value;
-  const minMagnitude = parseNumber(elements["min-magnitude"].value) || 0;
 
   state.scopedRows = state.allRows.filter((row) => {
     if (department && row.departamento !== department) {
-      return false;
-    }
-    if (Number.isFinite(row.magnitud) && row.magnitud < minMagnitude) {
-      return false;
-    }
-    if (!Number.isFinite(row.magnitud) && minMagnitude > 0) {
       return false;
     }
     return true;
@@ -375,7 +362,7 @@ function applyFilters() {
     return true;
   });
 
-  updateFilterSummary(startDate, endDate, department, minMagnitude);
+  updateFilterSummary(startDate, endDate, department);
   renderSummaryCards(state.scopedRows);
   renderMagnitudeBands(state.filteredRows);
   renderOccurrenceSeries(state.filteredRows, startDate, endDate);
@@ -666,14 +653,9 @@ function renderRecentEvents() {
   elements["table-count"].textContent = `Showing ${rows.length} most recent events`;
 }
 
-function updateFilterSummary(startDate, endDate, department, minMagnitude) {
+function updateFilterSummary(startDate, endDate, department) {
   const scope = department ? `Department: ${department}` : "All departments";
-  elements["filter-summary"].textContent = `${formatTemporalLabel(startDate)} to ${formatTemporalLabel(endDate)} · ${scope} · M ${minMagnitude.toFixed(1)}+`;
-}
-
-function updateMinMagnitudeLabel() {
-  const value = parseNumber(elements["min-magnitude"].value) || 0;
-  elements["min-mag-value"].textContent = value.toFixed(1);
+  elements["filter-summary"].textContent = `${formatTemporalLabel(startDate)} to ${formatTemporalLabel(endDate)} · ${scope}`;
 }
 
 function syncQuickRangeButtons() {
