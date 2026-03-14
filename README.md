@@ -13,47 +13,103 @@
 
 ## 📌 Overview
 
-This project implements a cloud-automated data ingestion pipeline that continuously pulls public seismic data from official IGP (Instituto Geofísico del Perú) sources and publishes BI-ready datasets for Tableau and Power BI.
+This project implements a cloud-automated seismic data pipeline that continuously ingests public earthquake data from official IGP (Instituto Geofisico del Peru) sources and publishes analysis-ready outputs for BI, GIS, and web delivery.
 
-The system merges:
+The pipeline combines:
 
-- 📚 Official historical catalog (1960–2023)
-- ⚡ Live ArcGIS REST seismic feed
+- 📚 Official historical catalog (`1960-2020` slice from the government XLSX source)
+- 🗂 Annual report feed from `ultimosismo.igp.gob.pe` (`2020-current year`)
+- ⚡ Live ArcGIS REST seismic feed for the latest events
 
-into a unified dataset spanning multiple decades.
+into one curated dataset spanning historical and current seismic activity.
 
-All updates run automatically in GitHub Actions — no local machine required.
+All ingestion, transformation, export, monitoring, and website refresh steps run in GitHub Actions. No local machine is required for production refreshes.
 
 ---
 
 ## 📊 Interactive Dashboard
 
-🔗 **View the Live Dashboard on GitHub Pages**
+### Live GitHub Pages Dashboard
 
-https://ifc-chalaco.github.io/peru-seismic-dashboard/
+🔗 [https://ifc-chalaco.github.io/peru-seismic-dashboard/](https://ifc-chalaco.github.io/peru-seismic-dashboard/)
 
-### Published Website Data
+This repository now uses a native HTML dashboard as the primary public-facing experience.
 
-The GitHub Pages site reads from:
+### Why move away from Tableau Public?
 
+Tableau Public was useful for prototyping and visual design, but it was not a good fit for near-live publishing in this project.
+
+Main reasons:
+
+- Tableau Public relies on extract refresh behavior rather than a true live web feed.
+- When Google Sheets was used as an intermediary, refresh timing added another delay layer.
+- The GitHub Actions pipeline refreshes the seismic feed much more frequently than Tableau Public can reliably reflect.
+- A native HTML dashboard on GitHub Pages can read the published CSV and metadata files directly, so the website updates with the same automated pipeline that produces the datasets.
+
+In short: the HTML dashboard removes unnecessary refresh bottlenecks and keeps the public site closer to the live feed.
+
+### Legacy Tableau Public Reference
+
+Tableau Public remains as an earlier presentation artifact:
+
+🔗 [https://public.tableau.com/views/ReportesSismicosPeru/Dashboard1](https://public.tableau.com/views/ReportesSismicosPeru/Dashboard1)
+
+It is no longer the primary delivery layer for the live public dashboard.
+
+---
+
+## 🧱 HTML Dashboard Structure
+
+The GitHub Pages site is published from the `/docs` folder.
+
+### Core files
+
+- `docs/index.html`
+  - Page structure and dashboard layout
+- `docs/app.js`
+  - Client-side data loading, filtering, calculations, chart rendering, map rendering, and hover interactions
+- `docs/styles.css`
+  - Visual styling, layout system, responsiveness, and chart presentation
 - `docs/data/earthquakes_live_curated.csv`
+  - Curated dataset consumed by the website
 - `docs/data/dashboard_meta.json`
+  - Lightweight metadata used for coverage dates, row counts, and site sync display
 
-These files are refreshed automatically by the same GitHub Actions pipeline that updates the export feeds.
+### Purpose of the dashboard sections
 
-### Tableau Public
+- Hero and status cards
+  - Explain the project, display sync status, and show current published coverage
+- Summary cards
+  - Surface current-year and current-day KPI metrics in Eastern Time
+- Filter panel
+  - Controls date range, department, and minimum magnitude
+- Magnitude bands
+  - Groups earthquakes into human-readable severity buckets
+- Daily time series
+  - Shows event count by ET date
+- 7-day rolling average
+  - Smooths short-term volatility to highlight the recent trend
+- Monthly and yearly time series
+  - Show longer historical cadence and changes over time
+- Magnitude vs depth scatterplot
+  - Shows how stronger events distribute across depth
+- Magnitude vs event date scatterplot
+  - Shows temporal clustering of magnitude over the selected period
+- Most affected departamentos bubble chart
+  - Shows the current concentration of events by region in a visually scan-friendly layout
+- Epicenter map
+  - Displays filtered event locations spatially
+- Recent events table
+  - Shows the latest filtered records in a quick operational view
 
-https://public.tableau.com/views/ReportesSismicosPeru/Dashboard1
+### Interaction model
 
-### GitHub Project Site
+The dashboard is fully client-side:
 
-This repository includes a native GitHub Pages dashboard under:
-
-`/docs/index.html`
-
-After enabling GitHub Pages for the `main` branch `/docs` folder, the site will be available at:
-
-https://ifc-chalaco.github.io/peru-seismic-dashboard/
+- loads the curated CSV and metadata JSON directly from GitHub Pages
+- applies filters in-browser
+- redraws charts without server-side rendering
+- supports hover detail for time series, scatterplots, and bubbles
 
 ---
 
@@ -61,61 +117,55 @@ https://ifc-chalaco.github.io/peru-seismic-dashboard/
 
 ### High-Level Flow
 
+```text
+  Historical XLSX (1960-2023) ─────┐
+                                   │
+  IGP Reportes Feed (2020-current) ├──> Python ingestion + normalization
+                                   │
+  Live ArcGIS REST feed ───────────┘
+                                   │
+                                   ▼
+                         SQLite working store
+                                   │
+                                   ▼
+                  Curated / full / GeoJSON export layer
+                                   │
+                  ┌────────────────┼─────────────────┐
+                  ▼                ▼                 ▼
+         Raw GitHub exports   GitHub Pages data   BI / GIS consumers
+                               (`/docs/data`)     (Power BI, Tableau,
+                                                   custom apps)
 ```
-           ┌───────────────────────────────┐
-           │  IGP Historical Catalog XLSX │
-           └──────────────┬────────────────┘
-                          │
-                          ▼
-           ┌───────────────────────────────┐
-           │  Historical Ingestion Layer   │
-           └──────────────┬────────────────┘
-                          │
-                          ▼
-┌────────────────────────────────────────────────┐
-│              SQLite Data Store                 │
-│  - raw_events                                  │
-│  - schema metadata                             │
-│  - ingestion state                             │
-└────────────────────────────────────────────────┘
-                          ▲
-                          │
-           ┌──────────────┴────────────────┐
-           │   Live ArcGIS REST Endpoint    │
-           └────────────────────────────────┘
-                          │
-                          ▼
-           ┌───────────────────────────────┐
-           │   Transformation & Validation │
-           └──────────────┬────────────────┘
-                          │
-                          ▼
-           ┌───────────────────────────────┐
-           │     Export Layer (CSV/JSON)   │
-           └──────────────┬────────────────┘
-                          │
-                          ▼
-           ┌───────────────────────────────┐
-           │   Tableau / Power BI / GIS    │
-           └───────────────────────────────┘
+
+### Web delivery flow
+
+```text
+GitHub Actions
+   -> run ingestion pipeline
+   -> regenerate exports
+   -> mirror curated website data into /docs/data
+   -> push to main
+   -> GitHub Pages serves static HTML/CSS/JS + refreshed data files
 ```
 
 ---
 
 ## 🔄 What the Pipeline Does
 
-- Incrementally pulls new seismic events (`objectid`)
-- Backfills official historical catalog
-- Merges historical + live records
-- Detects schema changes
-- Normalizes timestamps:
+- Incrementally pulls new seismic events from the live feed (`objectid` based)
+- Backfills historical records from official catalog files
+- Ingests annual report data from the IGP report site
+- Merges overlapping historical, annual, and live sources
+- Normalizes timestamps into:
   - `event_ts_utc`
   - `event_ts_et`
   - `event_date_et`
   - `event_time_et`
-- Filters invalid timestamps
-- Regenerates curated + full exports
-- Runs automatically in the cloud
+- Filters invalid timestamps and incomplete rows from the curated feed
+- Canonicalizes event codes for de-duplication across sources
+- Detects schema changes and preserves raw source payloads
+- Regenerates curated, full, GeoJSON, and website-facing outputs
+- Runs automatically in the cloud on a schedule
 
 ---
 
@@ -123,39 +173,51 @@ https://ifc-chalaco.github.io/peru-seismic-dashboard/
 
 ### Live REST Feed
 
-https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/MapServer/0
+[https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/MapServer/0](https://ide.igp.gob.pe/arcgis/rest/services/monitoreocensis/SismosReportados/MapServer/0)
+
+### Annual Report Feed
+
+[https://ultimosismo.igp.gob.pe/api/ultimo-sismo/ajaxb](https://ultimosismo.igp.gob.pe/api/ultimo-sismo/ajaxb)
 
 ### Historical Catalog (Official Government Data)
 
-https://www.datosabiertos.gob.pe/sites/default/files/Catalogo1960_2023.xlsx
+[https://www.datosabiertos.gob.pe/sites/default/files/Catalogo1960_2023.xlsx](https://www.datosabiertos.gob.pe/sites/default/files/Catalogo1960_2023.xlsx)
 
 ---
 
 ## 📦 Outputs
 
-### ✅ Curated CSV (Recommended for BI)
+### ✅ Curated CSV (Recommended)
 
-Analytics-ready dataset:
+Analytics-ready dataset for BI tools and custom apps:
 
-https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live_curated.csv
+[https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live_curated.csv](https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live_curated.csv)
 
 ### 📄 Full CSV
 
-Includes raw source columns:
+Includes additional raw source columns:
 
-https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live.csv
+[https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live.csv](https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live.csv)
 
 ### 🗺 GeoJSON
 
 Geospatial-ready feed:
 
-https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live.geojson
+[https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live.geojson](https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live.geojson)
 
 The GeoJSON properties include filter-friendly date fields such as:
+
 - `event_date_utc`, `event_time_utc`
 - `event_date_local`, `event_time_local`
 - `event_date_et`, `event_time_et`
 - `event_utc_date_key`, `event_local_date_key`, `event_et_date_key`
+
+### 🌐 Website Data
+
+These are the files consumed directly by the HTML dashboard:
+
+- `docs/data/earthquakes_live_curated.csv`
+- `docs/data/dashboard_meta.json`
 
 ---
 
@@ -163,19 +225,27 @@ The GeoJSON properties include filter-friendly date fields such as:
 
 | Column | Description |
 |--------|-------------|
-| objectid | Unique event identifier |
+| objectid | Event identifier from source or normalized synthetic identifier |
+| code | Canonical event code used for de-duplication |
 | lat | Latitude |
 | lon | Longitude |
 | magnitud | Earthquake magnitude |
-| prof | Depth (km) |
+| prof | Depth in kilometers |
+| profundidad | Depth classification label |
+| intensidad | Reported intensity description |
+| departamento | Department / region label |
+| referencia | Textual geographic reference |
 | event_ts_utc | UTC timestamp |
 | event_ts_et | Eastern Time timestamp |
-| event_date_et | ET date (BI-friendly) |
-| event_time_et | ET time (BI-friendly) |
+| event_date_et | ET date for filtering and charting |
+| event_time_et | ET time for operational display |
+| ingested_at_utc | Pipeline ingestion timestamp |
 
 The curated feed excludes:
-- Null timestamps
-- Invalid datetime records
+
+- null timestamps
+- invalid datetime records
+- duplicate cross-source events where canonical code matching is possible
 
 ---
 
@@ -183,28 +253,28 @@ The curated feed excludes:
 
 ### GitHub Actions Workflows
 
-- `igp-seismic-refresh.yml`
-- `igp-seismic-stale-alert.yml`
+- `.github/workflows/igp-seismic-refresh.yml`
+- `.github/workflows/igp-seismic-stale-alert.yml`
 
-### Automated Capabilities
+### Automated capabilities
 
-- Scheduled ingestion
-- Export regeneration
-- Heartbeat monitoring
-- Automatic GitHub alert issue creation
-- Idempotent historical ingestion
-- Ephemeral runner compatibility
+- scheduled ingestion and export regeneration
+- website data refresh under `/docs/data`
+- heartbeat monitoring for stale feed detection
+- automatic GitHub issue creation for stale pipeline alerts
+- idempotent historical ingestion behavior
+- compatibility with ephemeral CI runners
 
 ---
 
 ## 🔐 Security & Data Integrity
 
-- No credentials stored
-- No personal data
-- SQLite database not published
-- Only derived public datasets committed
-- Schema-aware ingestion process
-- Validation during export phase
+- no credentials stored in the repository
+- no personal data ingested or published
+- SQLite working database is not published
+- only derived public datasets are committed
+- schema-aware ingestion and export validation
+- raw source payloads preserved for traceability where needed
 
 ---
 
@@ -214,13 +284,13 @@ The curated feed excludes:
 python3 seismic_bi_stream/igp_seismic_stream.py
 ```
 
-Continuous development mode:
+Continuous loop mode:
 
 ```bash
 python3 seismic_bi_stream/igp_seismic_stream.py --loop --interval-seconds 120
 ```
 
-Production automation handled by GitHub Actions.
+Production refreshes are handled by GitHub Actions.
 
 ---
 
@@ -228,14 +298,67 @@ Production automation handled by GitHub Actions.
 
 ## 📌 Descripción General
 
-Este proyecto implementa un pipeline automatizado en la nube que consume datos sísmicos oficiales del IGP y publica datasets listos para análisis en Tableau y Power BI.
+Este proyecto implementa un pipeline automatizado en la nube para consumir datos sísmicos públicos del IGP y publicar salidas listas para analisis, visualizacion web, BI y GIS.
 
 Integra:
 
-- 📚 Catálogo histórico oficial (1960–2023)
-- ⚡ Feed en vivo vía ArcGIS REST
+- 📚 Catalogo historico oficial (`1960-2020` desde el archivo XLSX gubernamental)
+- 🗂 Feed anual de reportes de `ultimosismo.igp.gob.pe` (`2020-anio actual`)
+- ⚡ Feed en vivo ArcGIS REST para los eventos mas recientes
 
-en un dataset continuo de múltiples décadas.
+Todo el proceso de ingesta, transformacion, exportacion, monitoreo y actualizacion del sitio corre automaticamente en GitHub Actions.
+
+---
+
+## 📊 Dashboard interactivo
+
+### Dashboard principal en GitHub Pages
+
+🔗 [https://ifc-chalaco.github.io/peru-seismic-dashboard/](https://ifc-chalaco.github.io/peru-seismic-dashboard/)
+
+### Por que dejar Tableau Public como dashboard principal?
+
+Tableau Public fue util para prototipar visualizaciones, pero no era la mejor opcion para un dashboard publico con expectativa de refresco cercano al tiempo real.
+
+Razones principales:
+
+- Tableau Public trabaja con extracciones y no con una fuente web verdaderamente en vivo.
+- Google Sheets como capa intermedia agregaba mas retraso al refresco.
+- El pipeline en GitHub Actions actualiza los datos con mas frecuencia que Tableau Public puede reflejar de forma consistente.
+- El dashboard HTML en GitHub Pages consume directamente los archivos publicados por el pipeline, eliminando cuellos de botella innecesarios.
+
+Por eso, el dashboard HTML es ahora la capa principal de publicacion.
+
+### Referencia historica en Tableau Public
+
+🔗 [https://public.tableau.com/views/ReportesSismicosPeru/Dashboard1](https://public.tableau.com/views/ReportesSismicosPeru/Dashboard1)
+
+---
+
+## 🧱 Estructura del dashboard HTML
+
+Archivos principales:
+
+- `docs/index.html`: estructura de la pagina y layout del dashboard
+- `docs/app.js`: carga de datos, filtros, calculos, graficos, mapa e interacciones
+- `docs/styles.css`: estilo visual, layout responsivo y presentacion
+- `docs/data/earthquakes_live_curated.csv`: dataset curado consumido por el sitio
+- `docs/data/dashboard_meta.json`: metadata ligera para conteos, cobertura y sincronizacion
+
+Secciones principales del sitio:
+
+- Hero y tarjetas de estado
+- KPIs del anio actual y del dia actual
+- Panel de filtros
+- Bandas de magnitud
+- Serie diaria de ocurrencias
+- Promedio movil de 7 dias
+- Series mensuales y anuales
+- Scatterplot magnitud vs profundidad
+- Scatterplot magnitud vs fecha del evento
+- Bubble chart de departamentos mas afectados
+- Mapa de epicentros
+- Tabla de eventos recientes
 
 ---
 
@@ -243,32 +366,27 @@ en un dataset continuo de múltiples décadas.
 
 El sistema:
 
-- Integra datos históricos + en vivo
-- Normaliza timestamps
-- Detecta cambios de esquema
-- Publica CSV y GeoJSON
-- Se ejecuta automáticamente en la nube
+- integra datos historicos, anuales y en vivo
+- normaliza timestamps
+- deduplica eventos entre fuentes cuando es posible
+- publica CSV, GeoJSON y archivos para la web
+- se ejecuta automaticamente en la nube
 
 ---
 
-## 📊 Dashboard
+## 📦 Archivos generados
 
-🔗 https://public.tableau.com/views/ReportesSismicosPeru/Dashboard1
-
----
-
-## 📦 Archivos Generados
-
-- CSV Curado
-- CSV Completo
+- CSV curado
+- CSV completo
 - GeoJSON
-- Metadata de estado (`state.json`)
+- Archivos web en `docs/data/`
+- Metadata de estado y cobertura
 
 ---
 
 ## 🔐 Seguridad
 
-- No contiene credenciales
-- No almacena datos personales
-- Solo publica datos derivados de fuentes oficiales públicas
-- Compatible con ejecución CI/CD en entornos efímeros
+- no contiene credenciales
+- no almacena datos personales
+- solo publica datos derivados de fuentes oficiales publicas
+- compatible con ejecucion CI/CD en entornos efimeros
