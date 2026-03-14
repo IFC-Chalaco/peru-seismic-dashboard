@@ -20,8 +20,8 @@
         <p class="eyebrow">IGP Peru Seismic Monitor</p>
         <h1>Live seismic intelligence, published directly from GitHub Pages.</h1>
         <p class="hero-text">
-          This dashboard reads a curated earthquake feed refreshed automatically by GitHub Actions.
-          It combines historical records, annual report data, and the latest live feed into a single public website.
+          This dashboard reads the curated earthquake feed refreshed by GitHub Actions. It combines historical records,
+          annual report data, and the latest live feed into a single public website with filters in Eastern Time.
         </p>
         <div class="hero-actions">
           <a class="btn btn-primary" href="https://github.com/IFC-Chalaco/peru-seismic-dashboard" target="_blank" rel="noreferrer">Open repository</a>
@@ -43,6 +43,34 @@
       </div>
     </section>
 
+    <section class="summary-grid">
+      <article class="panel summary-card">
+        <span class="summary-label">Quakes this year</span>
+        <strong id="summary-year-count">-</strong>
+        <p id="summary-year-count-note">Loading current-year count</p>
+      </article>
+      <article class="panel summary-card">
+        <span class="summary-label">Highest magnitude this year</span>
+        <strong id="summary-year-max">-</strong>
+        <p id="summary-year-max-note">Loading current-year high</p>
+      </article>
+      <article class="panel summary-card">
+        <span class="summary-label">Average depth this year</span>
+        <strong id="summary-year-depth">-</strong>
+        <p id="summary-year-depth-note">Loading current-year depth</p>
+      </article>
+      <article class="panel summary-card">
+        <span class="summary-label">Quakes today</span>
+        <strong id="summary-today-count">-</strong>
+        <p id="summary-today-count-note">Loading today count</p>
+      </article>
+      <article class="panel summary-card">
+        <span class="summary-label">Highest magnitude today</span>
+        <strong id="summary-today-max">-</strong>
+        <p id="summary-today-max-note">Loading today high</p>
+      </article>
+    </section>
+
     <section class="panel controls-panel">
       <div class="panel-head">
         <div>
@@ -53,10 +81,10 @@
       </div>
 
       <div class="quick-range-wrap">
-        <button class="chip active" data-range="7" type="button">Last 7D</button>
+        <button class="chip" data-range="7" type="button">Last 7D</button>
         <button class="chip" data-range="30" type="button">Last 30D</button>
         <button class="chip" data-range="90" type="button">Last 90D</button>
-        <button class="chip" data-range="ytd" type="button">YTD</button>
+        <button class="chip active" data-range="ytd" type="button">YTD</button>
         <button class="chip" data-range="all" type="button">All history</button>
       </div>
 
@@ -77,7 +105,7 @@
         </label>
         <label class="field">
           <span>Minimum magnitude <strong id="min-mag-value">0.0</strong></span>
-          <input id="min-magnitude" type="range" min="0" max="8" step="0.1" value="0" />
+          <input id="min-magnitude" type="range" min="0" max="9" step="0.1" value="0" />
         </label>
       </div>
 
@@ -88,32 +116,93 @@
       </div>
     </section>
 
-    <section class="kpi-grid">
-      <article class="panel kpi-card">
-        <span class="kpi-label">Filtered events</span>
-        <strong id="kpi-filtered">-</strong>
-        <p id="kpi-filtered-note">Across the selected ET date window</p>
+    <section class="insight-grid">
+      <article class="panel chart-panel">
+        <div class="panel-head compact">
+          <div>
+            <p class="panel-kicker">Classification view</p>
+            <h2>Magnitude bands</h2>
+          </div>
+          <p id="band-note" class="muted-text"></p>
+        </div>
+        <div id="band-chart" class="band-chart"></div>
       </article>
-      <article class="panel kpi-card">
-        <span class="kpi-label">Strongest event</span>
-        <strong id="kpi-strongest">-</strong>
-        <p id="kpi-strongest-note">Magnitude inside current slice</p>
-      </article>
-      <article class="panel kpi-card">
-        <span class="kpi-label">Average depth</span>
-        <strong id="kpi-depth">-</strong>
-        <p id="kpi-depth-note">Kilometers below the surface</p>
-      </article>
-      <article class="panel kpi-card">
-        <span class="kpi-label">Latest event</span>
-        <strong id="kpi-latest">-</strong>
-        <p id="kpi-latest-note">Most recent ET timestamp in filter</p>
+
+      <article class="panel chart-panel">
+        <div class="panel-head compact">
+          <div>
+            <p class="panel-kicker">Seismic occurrences</p>
+            <h2>Daily time series</h2>
+          </div>
+          <p id="occurrence-note" class="muted-text"></p>
+        </div>
+        <div class="svg-wrap">
+          <svg id="occurrence-chart" class="chart-svg" viewBox="0 0 700 320" preserveAspectRatio="none"></svg>
+        </div>
       </article>
     </section>
 
-    <section class="main-grid">
+    <section class="insight-grid">
+      <article class="panel chart-panel">
+        <div class="panel-head compact">
+          <div>
+            <p class="panel-kicker">Historical cadence</p>
+            <h2>Earthquakes per month and year</h2>
+          </div>
+        </div>
+        <div class="dual-series-grid">
+          <section class="mini-series">
+            <div class="mini-series-head">
+              <h3>Monthly time series</h3>
+              <p id="month-note" class="muted-text"></p>
+            </div>
+            <div class="svg-wrap compact">
+              <svg id="month-chart" class="chart-svg" viewBox="0 0 700 280" preserveAspectRatio="none"></svg>
+            </div>
+          </section>
+          <section class="mini-series">
+            <div class="mini-series-head">
+              <h3>Yearly time series</h3>
+              <p id="year-note" class="muted-text"></p>
+            </div>
+            <div class="svg-wrap compact">
+              <svg id="year-chart" class="chart-svg" viewBox="0 0 700 280" preserveAspectRatio="none"></svg>
+            </div>
+          </section>
+        </div>
+      </article>
+
+      <article class="panel chart-panel">
+        <div class="panel-head compact">
+          <div>
+            <p class="panel-kicker">Risk profile</p>
+            <h2>Magnitude vs depth scatterplot</h2>
+          </div>
+          <p id="scatter-note" class="muted-text"></p>
+        </div>
+        <div id="scatter-legend" class="scatter-legend"></div>
+        <div class="svg-wrap">
+          <svg id="scatter-chart" class="chart-svg" viewBox="0 0 700 360" preserveAspectRatio="none"></svg>
+        </div>
+      </article>
+    </section>
+
+    <section class="geo-grid">
+      <article class="panel chart-panel">
+        <div class="panel-head compact">
+          <div>
+            <p class="panel-kicker">Regional concentration</p>
+            <h2>Most affected departamentos</h2>
+          </div>
+          <p id="bubble-note" class="muted-text"></p>
+        </div>
+        <div class="svg-wrap bubble-wrap">
+          <svg id="bubble-chart" class="chart-svg" viewBox="0 0 700 430" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
+      </article>
+
       <article class="panel map-panel">
-        <div class="panel-head">
+        <div class="panel-head compact">
           <div>
             <p class="panel-kicker">Spatial view</p>
             <h2>Epicenter map</h2>
@@ -122,39 +211,6 @@
         </div>
         <div id="map" aria-label="Peru earthquake map"></div>
       </article>
-
-      <aside class="side-grid">
-        <article class="panel">
-          <div class="panel-head compact">
-            <div>
-              <p class="panel-kicker">Volume trend</p>
-              <h2>Event rhythm</h2>
-            </div>
-            <p id="trend-grain" class="muted-text"></p>
-          </div>
-          <div id="trend-chart" class="bars-chart"></div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head compact">
-            <div>
-              <p class="panel-kicker">Magnitude profile</p>
-              <h2>Magnitude mix</h2>
-            </div>
-          </div>
-          <div id="magnitude-chart" class="stack-list"></div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head compact">
-            <div>
-              <p class="panel-kicker">Geographic concentration</p>
-              <h2>Departments</h2>
-            </div>
-          </div>
-          <div id="department-list" class="rank-list"></div>
-        </article>
-      </aside>
     </section>
 
     <section class="panel table-panel">
@@ -173,13 +229,14 @@
               <th>Date (ET)</th>
               <th>Magnitude</th>
               <th>Depth</th>
+              <th>Magnitude band</th>
               <th>Department</th>
               <th>Reference</th>
             </tr>
           </thead>
           <tbody id="recent-events-body">
             <tr>
-              <td colspan="6">Loading events...</td>
+              <td colspan="7">Loading events...</td>
             </tr>
           </tbody>
         </table>
@@ -188,8 +245,7 @@
 
     <section class="panel footer-panel">
       <p>
-        Filters use <strong>Eastern Time</strong> fields. The underlying pipeline still keeps UTC and local Peru time in the published feeds.
-        Data refreshes in GitHub Actions, not on a local machine.
+        Daily occurrence charts use the active ET date range. Month and year trends use the broader department and minimum magnitude scope so they still show historical shape even when the visible date range is narrow.
       </p>
       <p id="error-banner" class="error-banner" hidden></p>
     </section>

@@ -5,23 +5,28 @@ const PERU_VIEW = {
   zoom: 5,
 };
 const MAP_LIMIT = 2500;
+const SCATTER_LIMIT = 1800;
 const TABLE_LIMIT = 12;
-const MAG_BUCKETS = [
-  { label: "< 3.0", min: -Infinity, max: 2.999 },
-  { label: "3.0 - 3.9", min: 3.0, max: 3.999 },
-  { label: "4.0 - 4.9", min: 4.0, max: 4.999 },
-  { label: "5.0 - 5.9", min: 5.0, max: 5.999 },
-  { label: "6.0+", min: 6.0, max: Infinity },
+const MAG_BANDS = [
+  { label: "Very Light", maxExclusive: 3.0, color: "#1f9d72", rag: "Green" },
+  { label: "Minor", maxExclusive: 4.0, color: "#55b97f", rag: "Green" },
+  { label: "Light", maxExclusive: 5.0, color: "#a8c75a", rag: "Green" },
+  { label: "Moderate", maxExclusive: 6.0, color: "#f2b535", rag: "Amber" },
+  { label: "Strong", maxExclusive: 7.0, color: "#f47a20", rag: "Amber" },
+  { label: "Major", maxExclusive: 8.0, color: "#eb4b3c", rag: "Red" },
+  { label: "Big", maxExclusive: 9.0, color: "#b91c1c", rag: "Red" },
+  { label: "Extreme", maxExclusive: Infinity, color: "#7f1d1d", rag: "Red" },
 ];
 
 const state = {
   allRows: [],
+  scopedRows: [],
   filteredRows: [],
   meta: null,
   map: null,
   markerLayer: null,
-  activeRange: "7",
   renderer: null,
+  activeRange: "ytd",
 };
 
 const elements = {};
@@ -51,23 +56,35 @@ function cacheElements() {
     "apply-filters",
     "reset-filters",
     "download-filtered",
-    "kpi-filtered",
-    "kpi-filtered-note",
-    "kpi-strongest",
-    "kpi-strongest-note",
-    "kpi-depth",
-    "kpi-depth-note",
-    "kpi-latest",
-    "kpi-latest-note",
+    "summary-year-count",
+    "summary-year-count-note",
+    "summary-year-max",
+    "summary-year-max-note",
+    "summary-year-depth",
+    "summary-year-depth-note",
+    "summary-today-count",
+    "summary-today-count-note",
+    "summary-today-max",
+    "summary-today-max-note",
+    "band-chart",
+    "band-note",
+    "occurrence-chart",
+    "occurrence-note",
+    "month-chart",
+    "month-note",
+    "year-chart",
+    "year-note",
+    "scatter-chart",
+    "scatter-note",
+    "scatter-legend",
+    "bubble-chart",
+    "bubble-note",
     "map-note",
-    "trend-grain",
-    "trend-chart",
-    "magnitude-chart",
-    "department-list",
     "table-count",
     "recent-events-body",
     "error-banner",
   ];
+
   ids.forEach((id) => {
     elements[id] = document.getElementById(id);
   });
@@ -102,7 +119,7 @@ function initMap() {
 function bindEvents() {
   elements.quickRangeButtons.forEach((button) => {
     button.addEventListener("click", () => {
-      state.activeRange = button.dataset.range || "7";
+      state.activeRange = button.dataset.range || "ytd";
       syncQuickRangeButtons();
       applyQuickRange();
       applyFilters();
@@ -116,20 +133,17 @@ function bindEvents() {
   });
 
   elements["reset-filters"].addEventListener("click", () => {
-    state.activeRange = "7";
+    state.activeRange = "ytd";
     syncQuickRangeButtons();
-    applyQuickRange();
     elements["department-select"].value = "";
     elements["min-magnitude"].value = "0";
     updateMinMagnitudeLabel();
+    applyQuickRange();
     applyFilters();
   });
 
+  elements["min-magnitude"].addEventListener("input", updateMinMagnitudeLabel);
   elements["download-filtered"].addEventListener("click", downloadFilteredCsv);
-
-  elements["min-magnitude"].addEventListener("input", () => {
-    updateMinMagnitudeLabel();
-  });
 }
 
 async function loadDashboard() {
@@ -145,6 +159,7 @@ async function loadDashboard() {
   hydrateMeta();
   populateFilterOptions();
   updateMinMagnitudeLabel();
+  syncQuickRangeButtons();
   applyQuickRange();
   applyFilters();
 }
@@ -165,6 +180,7 @@ function loadCsvRows() {
           reject(results.errors[0]);
           return;
         }
+
         const rows = (results.data || [])
           .map(parseRow)
           .filter((row) => row !== null)
@@ -202,9 +218,14 @@ function parseRow(raw) {
     ? Date.parse(eventTsEt)
     : Date.parse(eventTsUtc);
 
-  if (!Number.isFinite(eventMs)) {
+  if (!Number.isFinite(eventMs) || !eventDateEt) {
     return null;
   }
+
+  const magnitud = parseNumber(raw.magnitud);
+  const prof = parseNumber(raw.prof);
+  const band = magnitudeBand(magnitud);
+  const departmentKey = canonicalDepartment(raw.departamento);
 
   return {
     objectid: Number(raw.objectid),
@@ -215,15 +236,19 @@ function parseRow(raw) {
     event_ts_utc: eventTsUtc,
     lat: parseNumber(raw.lat),
     lon: parseNumber(raw.lon),
-    magnitud: parseNumber(raw.magnitud),
-    prof: parseNumber(raw.prof),
+    magnitud,
+    prof,
     profundidad: String(raw.profundidad || "").trim(),
     intensidad: String(raw.intensidad || "").trim(),
-    departamento: String(raw.departamento || "").trim(),
+    departamento: formatDepartmentLabel(departmentKey),
+    departamento_key: departmentKey,
     referencia: String(raw.referencia || "").trim(),
     ultimo: Number(raw.ultimo || 0),
     reporte: Number(raw.reporte || 0),
     ingested_at_utc: String(raw.ingested_at_utc || "").trim(),
+    magnitudeBand: band.label,
+    ragRating: band.rag,
+    bandColor: band.color,
     eventMs,
   };
 }
@@ -231,7 +256,9 @@ function parseRow(raw) {
 function hydrateMeta() {
   const minDate = state.meta?.min_event_date_et || state.allRows.at(-1)?.event_date_et || "";
   const maxDate = state.meta?.max_event_date_et || state.allRows[0]?.event_date_et || "";
-  elements["generated-at"].textContent = formatMetaTimestamp(state.meta?.generated_at_et || state.allRows[0]?.event_ts_et);
+  const generatedAt = state.meta?.generated_at_et || state.allRows[0]?.event_ts_et;
+
+  elements["generated-at"].textContent = formatMetaTimestamp(generatedAt);
   elements["coverage-text"].textContent = minDate && maxDate ? `${minDate} to ${maxDate}` : "Coverage unavailable";
   elements["row-count"].textContent = formatNumber(state.meta?.row_count || state.allRows.length);
   elements["source-text"].textContent = "Curated feed mirrored into /docs/data and refreshed by GitHub Actions.";
@@ -244,18 +271,14 @@ function hydrateMeta() {
 
 function populateFilterOptions() {
   const departments =
-    state.meta?.departments ||
-    Array.from(
-      new Set(
-        state.allRows
-          .map((row) => row.departamento)
-          .filter((value) => value)
-      )
-    ).sort((left, right) => left.localeCompare(right));
+    state.meta?.departments?.map(canonicalDepartment).map(formatDepartmentLabel).filter(Boolean) ||
+    Array.from(new Set(state.allRows.map((row) => row.departamento).filter(Boolean)));
 
+  const unique = Array.from(new Set(departments)).sort((left, right) => left.localeCompare(right));
   const select = elements["department-select"];
   select.innerHTML = '<option value="">All departments</option>';
-  departments.forEach((department) => {
+
+  unique.forEach((department) => {
     const option = document.createElement("option");
     option.value = department;
     option.textContent = department;
@@ -281,7 +304,7 @@ function applyQuickRange() {
       startDate = minDate;
     }
   } else {
-    const days = Number(state.activeRange || 7);
+    const days = Number(state.activeRange || 30);
     if (Number.isFinite(days) && days > 0) {
       startDate = shiftIsoDate(maxDate, -(days - 1));
       if (startDate < minDate) {
@@ -308,13 +331,7 @@ function applyFilters() {
   const department = elements["department-select"].value;
   const minMagnitude = parseNumber(elements["min-magnitude"].value) || 0;
 
-  state.filteredRows = state.allRows.filter((row) => {
-    if (startDate && row.event_date_et < startDate) {
-      return false;
-    }
-    if (endDate && row.event_date_et > endDate) {
-      return false;
-    }
+  state.scopedRows = state.allRows.filter((row) => {
     if (department && row.departamento !== department) {
       return false;
     }
@@ -327,39 +344,188 @@ function applyFilters() {
     return true;
   });
 
+  state.filteredRows = state.scopedRows.filter((row) => {
+    if (startDate && row.event_date_et < startDate) {
+      return false;
+    }
+    if (endDate && row.event_date_et > endDate) {
+      return false;
+    }
+    return true;
+  });
+
   updateFilterSummary(startDate, endDate, department, minMagnitude);
-  renderKpis();
+  renderSummaryCards(state.scopedRows);
+  renderMagnitudeBands(state.filteredRows);
+  renderOccurrenceSeries(state.filteredRows, startDate, endDate);
+  renderMonthYearSeries(state.scopedRows);
+  renderScatterPlot(state.filteredRows);
+  renderBubbleChart(state.scopedRows);
   renderMap();
-  renderTrend(startDate, endDate);
-  renderMagnitudeMix();
-  renderDepartments();
   renderRecentEvents();
 }
 
-function renderKpis() {
-  const rows = state.filteredRows;
-  const latest = rows[0];
-  const maxMagnitudeRow = rows.reduce((best, row) => {
-    if (!best || (row.magnitud || -Infinity) > (best.magnitud || -Infinity)) {
-      return row;
-    }
-    return best;
-  }, null);
-  const depthValues = rows.map((row) => row.prof).filter((value) => Number.isFinite(value));
-  const avgDepth = depthValues.length
-    ? depthValues.reduce((sum, value) => sum + value, 0) / depthValues.length
-    : null;
+function renderSummaryCards(rows) {
+  const todayEt = currentEtDate();
+  const currentYear = todayEt.slice(0, 4);
+  const yearRows = rows.filter((row) => row.event_date_et.startsWith(`${currentYear}-`));
+  const todayRows = rows.filter((row) => row.event_date_et === todayEt);
+  const yearMax = strongestRow(yearRows);
+  const todayMax = strongestRow(todayRows);
+  const avgYearDepth = average(rows.filter((row) => row.event_date_et.startsWith(`${currentYear}-`)).map((row) => row.prof));
 
-  elements["kpi-filtered"].textContent = formatNumber(rows.length);
-  elements["kpi-filtered-note"].textContent = `${formatPercent(rows.length, state.allRows.length)} of published records`;
-  elements["kpi-strongest"].textContent = maxMagnitudeRow ? `M ${maxMagnitudeRow.magnitud.toFixed(1)}` : "No events";
-  elements["kpi-strongest-note"].textContent = maxMagnitudeRow
-    ? `${maxMagnitudeRow.departamento || "Unknown"} · ${maxMagnitudeRow.event_date_et}`
-    : "No magnitude available";
-  elements["kpi-depth"].textContent = avgDepth === null ? "No data" : `${avgDepth.toFixed(1)} km`;
-  elements["kpi-depth-note"].textContent = depthValues.length ? "Average depth in current slice" : "No depth records available";
-  elements["kpi-latest"].textContent = latest ? formatEventMoment(latest) : "No events";
-  elements["kpi-latest-note"].textContent = latest ? (latest.referencia || latest.departamento || "Latest published event") : "Adjust filters to see events";
+  elements["summary-year-count"].textContent = formatNumber(yearRows.length);
+  elements["summary-year-count-note"].textContent = `${currentYear} events in current scope`;
+  elements["summary-year-max"].textContent = yearMax ? `M ${yearMax.magnitud.toFixed(1)}` : "No events";
+  elements["summary-year-max-note"].textContent = yearMax ? `${yearMax.departamento || "Unknown"} · ${yearMax.event_date_et}` : `No ${currentYear} event in scope`;
+  elements["summary-year-depth"].textContent = avgYearDepth === null ? "No data" : `${avgYearDepth.toFixed(1)} km`;
+  elements["summary-year-depth-note"].textContent = avgYearDepth === null ? "No depth records this year" : `Average depth for ${currentYear}`;
+  elements["summary-today-count"].textContent = formatNumber(todayRows.length);
+  elements["summary-today-count-note"].textContent = `Date: ${todayEt}`;
+  elements["summary-today-max"].textContent = todayMax ? `M ${todayMax.magnitud.toFixed(1)}` : "No events";
+  elements["summary-today-max-note"].textContent = todayMax ? `${todayMax.departamento || "Unknown"} · ${todayMax.event_time_et} ET` : `No events on ${todayEt}`;
+}
+
+function renderMagnitudeBands(rows) {
+  const container = elements["band-chart"];
+  container.innerHTML = "";
+
+  if (!rows.length) {
+    container.innerHTML = '<div class="chart-empty">No events match the selected date range.</div>';
+    elements["band-note"].textContent = "No band distribution available.";
+    return;
+  }
+
+  const maxCount = Math.max(
+    ...MAG_BANDS.map((band) => rows.filter((row) => row.magnitudeBand === band.label).length),
+    1
+  );
+
+  MAG_BANDS.forEach((band) => {
+    const count = rows.filter((row) => row.magnitudeBand === band.label).length;
+    const percent = rows.length ? (count / rows.length) * 100 : 0;
+    const row = document.createElement("div");
+    row.className = "band-row";
+    row.innerHTML = `
+      <div class="band-meta-line">
+        <div class="band-name-wrap">
+          <span class="band-swatch" style="background:${band.color}"></span>
+          <span class="band-name">${band.label}</span>
+          <span class="rag-chip">${band.rag}</span>
+        </div>
+        <strong>${formatNumber(count)}</strong>
+      </div>
+      <div class="band-track"><span style="--size:${count / maxCount}; --fill:${band.color}"></span></div>
+      <div class="band-foot">${percent.toFixed(1)}% of filtered events</div>
+    `;
+    container.appendChild(row);
+  });
+
+  elements["band-note"].textContent = `${formatNumber(rows.length)} events in the filtered slice`;
+}
+
+function renderOccurrenceSeries(rows, startDate, endDate) {
+  const buckets = buildDailyBuckets(rows, startDate, endDate);
+  drawLineChart(elements["occurrence-chart"], buckets, {
+    color: "#0d7a6b",
+    fill: "rgba(13, 122, 107, 0.18)",
+    xLabelStep: 7,
+    yLabel: "Occurrences",
+  });
+  elements["occurrence-note"].textContent = `${formatNumber(rows.length)} events from ${startDate} to ${endDate}`;
+}
+
+function renderMonthYearSeries(rows) {
+  const monthBuckets = buildRollingMonthBuckets(rows, 24);
+  const yearBuckets = buildYearBuckets(rows);
+
+  drawLineChart(elements["month-chart"], monthBuckets, {
+    color: "#b8812d",
+    fill: "rgba(184, 129, 45, 0.14)",
+    xLabelStep: 4,
+    yLabel: "Monthly events",
+  });
+  drawLineChart(elements["year-chart"], yearBuckets, {
+    color: "#204d5e",
+    fill: "rgba(32, 77, 94, 0.14)",
+    xLabelStep: Math.max(1, Math.ceil(yearBuckets.length / 8)),
+    yLabel: "Yearly events",
+  });
+
+  elements["month-note"].textContent = monthBuckets.length ? "Last 24 months in current department and magnitude scope" : "No monthly history";
+  elements["year-note"].textContent = yearBuckets.length ? "Full available yearly history in current department and magnitude scope" : "No yearly history";
+}
+
+function renderScatterPlot(rows) {
+  const svg = elements["scatter-chart"];
+  const legend = elements["scatter-legend"];
+  legend.innerHTML = "";
+
+  const validRows = rows.filter((row) => Number.isFinite(row.magnitud) && Number.isFinite(row.prof));
+  if (!validRows.length) {
+    clearSvg(svg);
+    svg.appendChild(emptyText(svg, "No magnitude/depth pairs in the filtered slice."));
+    elements["scatter-note"].textContent = "No scatterplot data.";
+    return;
+  }
+
+  const sampledRows = sampleRows(validRows, SCATTER_LIMIT);
+  const depthMax = Math.max(10, niceCeiling(percentile(sampledRows.map((row) => row.prof), 0.98), 10));
+  const magMax = Math.max(4, niceCeiling(Math.max(...sampledRows.map((row) => row.magnitud)), 1));
+  renderScatterLegend(legend, sampledRows);
+  drawScatterPlot(svg, sampledRows, {
+    xMax: depthMax,
+    yMax: magMax,
+    xLabel: "Depth (km)",
+    yLabel: "Magnitude",
+  });
+  elements["scatter-note"].textContent = `${formatNumber(sampledRows.length)} sampled points colored by magnitude band and RAG category`;
+}
+
+function renderScatterLegend(container, rows) {
+  const seen = new Set(rows.map((row) => row.magnitudeBand));
+  MAG_BANDS.filter((band) => seen.has(band.label)).forEach((band) => {
+    const item = document.createElement("div");
+    item.className = "legend-item";
+    item.innerHTML = `
+      <span class="legend-swatch" style="background:${band.color}"></span>
+      <span>${band.label}</span>
+      <span class="legend-rag">${band.rag}</span>
+    `;
+    container.appendChild(item);
+  });
+}
+
+function renderBubbleChart(rows) {
+  const svg = elements["bubble-chart"];
+  const counts = new Map();
+  rows.forEach((row) => {
+    const department = row.departamento || "Unknown";
+    counts.set(department, (counts.get(department) || 0) + 1);
+  });
+
+  const ranked = Array.from(counts.entries())
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 12)
+    .map(([label, count]) => ({ label, count }));
+
+  if (!ranked.length) {
+    clearSvg(svg);
+    svg.appendChild(emptyText(svg, "No department distribution available."));
+    elements["bubble-note"].textContent = "No bubbles to show.";
+    return;
+  }
+
+  const width = 700;
+  const height = 430;
+  const maxCount = ranked[0].count || 1;
+  const items = ranked.map((item) => ({
+    ...item,
+    radius: 34 + Math.sqrt(item.count / maxCount) * 58,
+  }));
+  const bubbles = layoutBubbles(items, width, height);
+  drawBubbleChart(svg, bubbles, maxCount);
+  elements["bubble-note"].textContent = `Top ${ranked.length} departamentos in the current department and magnitude scope`;
 }
 
 function renderMap() {
@@ -368,10 +534,7 @@ function renderMap() {
   }
 
   state.markerLayer.clearLayers();
-
-  const mappableRows = state.filteredRows.filter(
-    (row) => Number.isFinite(row.lat) && Number.isFinite(row.lon)
-  );
+  const mappableRows = state.filteredRows.filter((row) => Number.isFinite(row.lat) && Number.isFinite(row.lon));
 
   if (!mappableRows.length) {
     elements["map-note"].textContent = "No geocoded events match the current filter.";
@@ -387,11 +550,10 @@ function renderMap() {
       renderer: state.renderer,
       radius: markerRadius(row.magnitud),
       weight: 0.8,
-      color: "#16303d",
-      fillColor: magnitudeColor(row.magnitud),
+      color: "#17313e",
+      fillColor: row.bandColor,
       fillOpacity: 0.78,
     });
-
     marker.bindPopup(buildPopupMarkup(row), { maxWidth: 320 });
     marker.addTo(state.markerLayer);
     bounds.push([row.lat, row.lon]);
@@ -409,112 +571,12 @@ function renderMap() {
       : `${formatNumber(mappableRows.length)} mapped events match the current filter.`;
 }
 
-function renderTrend(startDate, endDate) {
-  const rows = state.filteredRows;
-  const container = elements["trend-chart"];
-  container.innerHTML = "";
-
-  if (!rows.length || !startDate || !endDate) {
-    elements["trend-grain"].textContent = "No events";
-    container.innerHTML = '<div class="muted-text">No events in the selected period.</div>';
-    return;
-  }
-
-  const spanDays = diffDaysInclusive(startDate, endDate);
-  const grain = spanDays <= 92 ? "day" : spanDays <= 730 ? "month" : "year";
-  const buckets = buildTimeBuckets(rows, startDate, endDate, grain);
-  const maxCount = Math.max(...buckets.map((bucket) => bucket.count), 1);
-  const labelStep = Math.max(1, Math.ceil(buckets.length / 8));
-
-  buckets.forEach((bucket, index) => {
-    const column = document.createElement("div");
-    column.className = "bar-column";
-    column.title = `${bucket.label}: ${formatNumber(bucket.count)} event${bucket.count === 1 ? "" : "s"}`;
-    column.dataset.label = index % labelStep === 0 ? bucket.shortLabel : "";
-
-    const fill = document.createElement("span");
-    fill.className = "bar-fill";
-    fill.style.setProperty("--size", String(bucket.count / maxCount));
-
-    column.appendChild(fill);
-    container.appendChild(column);
-  });
-
-  elements["trend-grain"].textContent = `Grouped by ${grain}`;
-}
-
-function renderMagnitudeMix() {
-  const rows = state.filteredRows;
-  const container = elements["magnitude-chart"];
-  container.innerHTML = "";
-
-  if (!rows.length) {
-    container.innerHTML = '<div class="muted-text">No magnitude records in this slice.</div>';
-    return;
-  }
-
-  const counts = MAG_BUCKETS.map((bucket) => ({
-    label: bucket.label,
-    count: rows.filter(
-      (row) => Number.isFinite(row.magnitud) && row.magnitud >= bucket.min && row.magnitud <= bucket.max
-    ).length,
-  }));
-  const maxCount = Math.max(...counts.map((item) => item.count), 1);
-
-  counts.forEach((item) => {
-    const row = document.createElement("div");
-    row.className = "stack-row";
-    row.innerHTML = `
-      <div class="stack-meta">
-        <span>${item.label}</span>
-        <strong>${formatNumber(item.count)}</strong>
-      </div>
-      <div class="stack-track"><span style="--size:${item.count / maxCount}"></span></div>
-    `;
-    container.appendChild(row);
-  });
-}
-
-function renderDepartments() {
-  const container = elements["department-list"];
-  container.innerHTML = "";
-  const counts = new Map();
-
-  state.filteredRows.forEach((row) => {
-    const department = row.departamento || "Unknown";
-    counts.set(department, (counts.get(department) || 0) + 1);
-  });
-
-  const ranked = Array.from(counts.entries())
-    .sort((left, right) => right[1] - left[1])
-    .slice(0, 8);
-
-  if (!ranked.length) {
-    container.innerHTML = '<div class="muted-text">No department labels in this slice.</div>';
-    return;
-  }
-
-  const maxCount = ranked[0][1] || 1;
-  ranked.forEach(([department, count]) => {
-    const row = document.createElement("div");
-    row.className = "rank-row";
-    row.innerHTML = `
-      <div class="rank-meta">
-        <span>${department}</span>
-        <strong>${formatNumber(count)}</strong>
-      </div>
-      <div class="rank-track"><span style="--size:${count / maxCount}"></span></div>
-    `;
-    container.appendChild(row);
-  });
-}
-
 function renderRecentEvents() {
   const tbody = elements["recent-events-body"];
   tbody.innerHTML = "";
 
   if (!state.filteredRows.length) {
-    tbody.innerHTML = '<tr><td colspan="6">No events match the current filter.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7">No events match the current filter.</td></tr>';
     elements["table-count"].textContent = "0 rows";
     return;
   }
@@ -527,6 +589,7 @@ function renderRecentEvents() {
       <td>${escapeHtml(row.event_date_et)}<br /><span class="muted-text">${escapeHtml(row.event_time_et || "--")} ET</span></td>
       <td>${Number.isFinite(row.magnitud) ? `M ${row.magnitud.toFixed(1)}` : "--"}</td>
       <td>${Number.isFinite(row.prof) ? `${row.prof} km` : "--"}</td>
+      <td><span class="band-inline"><span class="band-inline-dot" style="background:${row.bandColor}"></span>${escapeHtml(row.magnitudeBand)}</span></td>
       <td>${escapeHtml(row.departamento || "--")}</td>
       <td>${escapeHtml(row.referencia || "--")}</td>
     `;
@@ -538,8 +601,7 @@ function renderRecentEvents() {
 
 function updateFilterSummary(startDate, endDate, department, minMagnitude) {
   const scope = department ? `Department: ${department}` : "All departments";
-  elements["filter-summary"].textContent =
-    `${startDate || "--"} to ${endDate || "--"} · ${scope} · M ${minMagnitude.toFixed(1)}+`;
+  elements["filter-summary"].textContent = `${startDate || "--"} to ${endDate || "--"} · ${scope} · M ${minMagnitude.toFixed(1)}+`;
 }
 
 function updateMinMagnitudeLabel() {
@@ -570,6 +632,8 @@ function downloadFilteredCsv() {
       lat: row.lat,
       lon: row.lon,
       magnitud: row.magnitud,
+      magnitude_band: row.magnitudeBand,
+      rag_rating: row.ragRating,
       prof: row.prof,
       profundidad: row.profundidad,
       intensidad: row.intensidad,
@@ -592,57 +656,82 @@ function downloadFilteredCsv() {
   URL.revokeObjectURL(url);
 }
 
+function magnitudeBand(magnitude) {
+  if (!Number.isFinite(magnitude)) {
+    return { label: "Unknown", color: "#7c8b95", rag: "Unknown" };
+  }
+
+  for (const band of MAG_BANDS) {
+    if (magnitude < band.maxExclusive) {
+      return band;
+    }
+  }
+  return MAG_BANDS[MAG_BANDS.length - 1];
+}
+
 function buildPopupMarkup(row) {
   return `
     <div class="map-popup">
       <strong>${escapeHtml(row.code || "Unknown event")}</strong>
       <div>${escapeHtml(row.referencia || row.departamento || "No reference available")}</div>
       <div class="meta-line">${escapeHtml(row.event_date_et)} ${escapeHtml(row.event_time_et || "--")} ET</div>
-      <div class="meta-line">Magnitude ${Number.isFinite(row.magnitud) ? row.magnitud.toFixed(1) : "--"} · Depth ${Number.isFinite(row.prof) ? `${row.prof} km` : "--"}</div>
+      <div class="meta-line">${escapeHtml(row.magnitudeBand)} · ${escapeHtml(row.ragRating)} · Depth ${Number.isFinite(row.prof) ? `${row.prof} km` : "--"}</div>
     </div>
   `;
 }
 
-function buildTimeBuckets(rows, startDate, endDate, grain) {
-  if (grain === "day") {
-    const counts = new Map(rows.map((row) => [row.event_date_et, 0]));
-    rows.forEach((row) => {
-      counts.set(row.event_date_et, (counts.get(row.event_date_et) || 0) + 1);
-    });
+function buildDailyBuckets(rows, startDate, endDate) {
+  const counts = new Map();
+  rows.forEach((row) => {
+    counts.set(row.event_date_et, (counts.get(row.event_date_et) || 0) + 1);
+  });
 
-    const output = [];
-    let cursor = startDate;
-    while (cursor <= endDate) {
-      output.push({
-        label: cursor,
-        shortLabel: cursor.slice(5),
-        count: counts.get(cursor) || 0,
-      });
-      cursor = shiftIsoDate(cursor, 1);
-    }
-    return output;
+  const output = [];
+  let cursor = startDate;
+  while (cursor <= endDate) {
+    output.push({
+      label: cursor,
+      shortLabel: shortDateLabel(cursor),
+      value: counts.get(cursor) || 0,
+    });
+    cursor = shiftIsoDate(cursor, 1);
+  }
+  return output;
+}
+
+function buildRollingMonthBuckets(rows, monthWindow) {
+  if (!rows.length) {
+    return [];
   }
 
-  if (grain === "month") {
-    const counts = new Map();
-    rows.forEach((row) => {
-      const key = row.event_date_et.slice(0, 7);
-      counts.set(key, (counts.get(key) || 0) + 1);
-    });
+  const counts = new Map();
+  rows.forEach((row) => {
+    const key = row.event_date_et.slice(0, 7);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
 
-    const output = [];
-    let cursor = `${startDate.slice(0, 7)}-01`;
-    const endCursor = `${endDate.slice(0, 7)}-01`;
-    while (cursor <= endCursor) {
-      const key = cursor.slice(0, 7);
-      output.push({
-        label: key,
-        shortLabel: key.slice(2),
-        count: counts.get(key) || 0,
-      });
-      cursor = shiftMonth(cursor, 1);
-    }
-    return output;
+  const maxMonth = rows[0].event_date_et.slice(0, 7);
+  let cursor = `${maxMonth}-01`;
+  for (let step = 1; step < monthWindow; step += 1) {
+    cursor = shiftMonth(cursor, -1);
+  }
+
+  const output = [];
+  for (let step = 0; step < monthWindow; step += 1) {
+    const key = cursor.slice(0, 7);
+    output.push({
+      label: key,
+      shortLabel: shortMonthLabel(key),
+      value: counts.get(key) || 0,
+    });
+    cursor = shiftMonth(cursor, 1);
+  }
+  return output;
+}
+
+function buildYearBuckets(rows) {
+  if (!rows.length) {
+    return [];
   }
 
   const counts = new Map();
@@ -651,24 +740,415 @@ function buildTimeBuckets(rows, startDate, endDate, grain) {
     counts.set(key, (counts.get(key) || 0) + 1);
   });
 
+  const minYear = Number(rows.at(-1).event_date_et.slice(0, 4));
+  const maxYear = Number(rows[0].event_date_et.slice(0, 4));
   const output = [];
-  let cursorYear = Number(startDate.slice(0, 4));
-  const endYear = Number(endDate.slice(0, 4));
-  while (cursorYear <= endYear) {
-    const key = String(cursorYear);
+  for (let year = minYear; year <= maxYear; year += 1) {
+    const key = String(year);
     output.push({
       label: key,
       shortLabel: key,
-      count: counts.get(key) || 0,
+      value: counts.get(key) || 0,
     });
-    cursorYear += 1;
   }
   return output;
+}
+
+function drawLineChart(svg, series, options) {
+  clearSvg(svg);
+  if (!series.length) {
+    svg.appendChild(emptyText(svg, "No series data available."));
+    return;
+  }
+
+  const width = 700;
+  const height = Number(svg.getAttribute("viewBox").split(" ")[3] || 320);
+  const pad = { top: 20, right: 18, bottom: 42, left: 48 };
+  const innerWidth = width - pad.left - pad.right;
+  const innerHeight = height - pad.top - pad.bottom;
+  const maxValue = Math.max(...series.map((point) => point.value), 1);
+  const xStep = series.length > 1 ? innerWidth / (series.length - 1) : innerWidth / 2;
+  const yScale = (value) => pad.top + innerHeight - (value / maxValue) * innerHeight;
+  const xScale = (index) => pad.left + (series.length === 1 ? innerWidth / 2 : index * xStep);
+
+  for (let line = 0; line <= 4; line += 1) {
+    const y = pad.top + (innerHeight / 4) * line;
+    svg.appendChild(
+      svgNode("line", {
+        x1: pad.left,
+        x2: width - pad.right,
+        y1: y,
+        y2: y,
+        class: "grid-line",
+      })
+    );
+
+    const value = Math.round(maxValue - (maxValue / 4) * line);
+    svg.appendChild(
+      svgNode("text", {
+        x: pad.left - 8,
+        y: y + 4,
+        class: "axis-text",
+        "text-anchor": "end",
+      }, formatNumber(value))
+    );
+  }
+
+  const points = series.map((point, index) => `${xScale(index)},${yScale(point.value)}`);
+  const areaPath = [
+    `M ${pad.left} ${pad.top + innerHeight}`,
+    ...series.map((point, index) => `L ${xScale(index)} ${yScale(point.value)}`),
+    `L ${xScale(series.length - 1)} ${pad.top + innerHeight}`,
+    "Z",
+  ].join(" ");
+
+  svg.appendChild(svgNode("path", { d: areaPath, fill: options.fill || "rgba(14,122,108,0.16)", class: "area-shape" }));
+  svg.appendChild(svgNode("polyline", {
+    points: points.join(" "),
+    fill: "none",
+    stroke: options.color || "#0d7a6b",
+    "stroke-width": 3,
+    class: "line-path",
+  }));
+
+  const labelStep = Math.max(1, options.xLabelStep || Math.ceil(series.length / 8));
+  series.forEach((point, index) => {
+    const cx = xScale(index);
+    const cy = yScale(point.value);
+    if (series.length <= 48 || index % labelStep === 0 || index === series.length - 1) {
+      svg.appendChild(svgNode("circle", {
+        cx,
+        cy,
+        r: 3.2,
+        fill: options.color || "#0d7a6b",
+        class: "line-point",
+      }));
+    }
+    if (index % labelStep === 0 || index === series.length - 1) {
+      svg.appendChild(
+        svgNode("text", {
+          x: cx,
+          y: height - 12,
+          class: "axis-text",
+          "text-anchor": "middle",
+        }, point.shortLabel || point.label)
+      );
+    }
+  });
+
+  svg.appendChild(
+    svgNode("text", {
+      x: 20,
+      y: pad.top + innerHeight / 2,
+      class: "axis-title",
+      transform: `rotate(-90 20 ${pad.top + innerHeight / 2})`,
+      "text-anchor": "middle",
+    }, options.yLabel || "")
+  );
+}
+
+function drawScatterPlot(svg, rows, options) {
+  clearSvg(svg);
+  const width = 700;
+  const height = 360;
+  const pad = { top: 20, right: 16, bottom: 48, left: 58 };
+  const innerWidth = width - pad.left - pad.right;
+  const innerHeight = height - pad.top - pad.bottom;
+
+  const xScale = (value) => pad.left + Math.min(value, options.xMax) / options.xMax * innerWidth;
+  const yScale = (value) => pad.top + innerHeight - (value / options.yMax) * innerHeight;
+
+  for (let index = 0; index <= 4; index += 1) {
+    const y = pad.top + (innerHeight / 4) * index;
+    const value = (options.yMax / 4) * (4 - index);
+    svg.appendChild(svgNode("line", {
+      x1: pad.left,
+      x2: width - pad.right,
+      y1: y,
+      y2: y,
+      class: "grid-line",
+    }));
+    svg.appendChild(svgNode("text", {
+      x: pad.left - 10,
+      y: y + 4,
+      class: "axis-text",
+      "text-anchor": "end",
+    }, value.toFixed(1)));
+  }
+
+  for (let index = 0; index <= 5; index += 1) {
+    const depth = (options.xMax / 5) * index;
+    const x = pad.left + (innerWidth / 5) * index;
+    svg.appendChild(svgNode("line", {
+      x1: x,
+      x2: x,
+      y1: pad.top,
+      y2: height - pad.bottom,
+      class: "grid-line",
+    }));
+    svg.appendChild(svgNode("text", {
+      x,
+      y: height - 16,
+      class: "axis-text",
+      "text-anchor": "middle",
+    }, `${Math.round(depth)}`));
+  }
+
+  rows.forEach((row) => {
+    svg.appendChild(svgNode("circle", {
+      cx: xScale(row.prof),
+      cy: yScale(row.magnitud),
+      r: Math.max(3, Math.min(8, 2 + row.magnitud * 0.7)),
+      fill: row.bandColor,
+      "fill-opacity": 0.78,
+      stroke: "#17313e",
+      "stroke-width": 0.6,
+    }));
+  });
+
+  svg.appendChild(svgNode("text", {
+    x: width / 2,
+    y: height - 2,
+    class: "axis-title",
+    "text-anchor": "middle",
+  }, options.xLabel));
+  svg.appendChild(svgNode("text", {
+    x: 18,
+    y: pad.top + innerHeight / 2,
+    class: "axis-title",
+    transform: `rotate(-90 18 ${pad.top + innerHeight / 2})`,
+    "text-anchor": "middle",
+  }, options.yLabel));
+}
+
+function drawBubbleChart(svg, bubbles, maxCount) {
+  clearSvg(svg);
+  if (!bubbles.length) {
+    svg.appendChild(emptyText(svg, "No bubble data available."));
+    return;
+  }
+
+  bubbles.forEach((bubble, index) => {
+    const shade = 0.2 + 0.65 * (bubble.count / maxCount);
+    const fill = `rgba(14, 122, 108, ${shade.toFixed(3)})`;
+
+    svg.appendChild(svgNode("circle", {
+      cx: bubble.x,
+      cy: bubble.y,
+      r: bubble.radius,
+      fill,
+      stroke: "#16303d",
+      "stroke-width": 1,
+    }));
+
+    const label = splitBubbleLabel(bubble.label);
+    const fontSize = Math.max(11, Math.min(22, bubble.radius / 3.1));
+    const text = svgNode("text", {
+      x: bubble.x,
+      y: bubble.y - 6,
+      class: "bubble-label",
+      "text-anchor": "middle",
+      "font-size": fontSize,
+    });
+    label.forEach((line, lineIndex) => {
+      text.appendChild(svgNode("tspan", {
+        x: bubble.x,
+        dy: lineIndex === 0 ? 0 : fontSize * 1.05,
+      }, line));
+    });
+    text.appendChild(svgNode("tspan", {
+      x: bubble.x,
+      dy: fontSize * 1.12,
+      class: "bubble-count",
+    }, formatNumber(bubble.count)));
+    svg.appendChild(text);
+  });
+}
+
+function layoutBubbles(items, width, height) {
+  const placed = [];
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const margin = 16;
+
+  items.forEach((item, index) => {
+    if (index === 0) {
+      placed.push({ ...item, x: centerX, y: centerY });
+      return;
+    }
+
+    let position = null;
+    for (let spiral = 0; spiral < 420 && !position; spiral += 1) {
+      const angle = spiral * 0.55;
+      const distance = 18 + spiral * 3.2;
+      const x = centerX + Math.cos(angle) * distance * 1.08;
+      const y = centerY + Math.sin(angle) * distance * 0.76;
+      if (x - item.radius < margin || x + item.radius > width - margin) {
+        continue;
+      }
+      if (y - item.radius < margin || y + item.radius > height - margin) {
+        continue;
+      }
+      if (!placed.some((other) => distanceBetween(x, y, other.x, other.y) < item.radius + other.radius + 8)) {
+        position = { ...item, x, y };
+      }
+    }
+
+    if (!position) {
+      position = {
+        ...item,
+        x: margin + item.radius + (index % 4) * 140,
+        y: margin + item.radius + Math.floor(index / 4) * 120,
+      };
+    }
+    placed.push(position);
+  });
+
+  return placed;
+}
+
+function currentEtDate() {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(new Date());
+  const year = parts.find((part) => part.type === "year")?.value || "0000";
+  const month = parts.find((part) => part.type === "month")?.value || "01";
+  const day = parts.find((part) => part.type === "day")?.value || "01";
+  return `${year}-${month}-${day}`;
+}
+
+function currentYearFromRows(rows) {
+  return rows.length ? rows[0].event_date_et.slice(0, 4) : currentEtDate().slice(0, 4);
+}
+
+function strongestRow(rows) {
+  return rows.reduce((best, row) => {
+    if (!Number.isFinite(row.magnitud)) {
+      return best;
+    }
+    if (!best || row.magnitud > best.magnitud) {
+      return row;
+    }
+    return best;
+  }, null);
+}
+
+function sampleRows(rows, limit) {
+  if (rows.length <= limit) {
+    return rows;
+  }
+  const output = [];
+  const step = rows.length / limit;
+  for (let index = 0; index < limit; index += 1) {
+    output.push(rows[Math.floor(index * step)]);
+  }
+  return output;
+}
+
+function canonicalDepartment(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  let normalized = String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+
+  if (!normalized) {
+    return "";
+  }
+
+  const aliases = {
+    "LA LIBERTDAD": "LA LIBERTAD",
+    "PROVINCIA CONSTITUCIONAL DEL CALLAO": "CALLAO",
+    "NO DE LA PROVINCIA CONSTITUCIONAL DEL CALLAO": "CALLAO",
+  };
+
+  if (normalized.includes("PROVINCIA CONSTITUCIONAL DEL CALLAO")) {
+    normalized = "CALLAO";
+  }
+
+  return aliases[normalized] || normalized;
+}
+
+function formatDepartmentLabel(value) {
+  if (!value) {
+    return "";
+  }
+  if (value === "OCEANO") {
+    return "Oceano";
+  }
+  return value
+    .toLowerCase()
+    .split(" ")
+    .map((part) => {
+      if (part === "de" || part === "del" || part === "la") {
+        return part;
+      }
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(" ");
 }
 
 function parseNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function average(values) {
+  const filtered = values.filter((value) => Number.isFinite(value));
+  if (!filtered.length) {
+    return null;
+  }
+  return filtered.reduce((sum, value) => sum + value, 0) / filtered.length;
+}
+
+function percentile(values, fraction) {
+  const filtered = values.filter((value) => Number.isFinite(value)).sort((left, right) => left - right);
+  if (!filtered.length) {
+    return 0;
+  }
+  const index = Math.max(0, Math.min(filtered.length - 1, Math.floor((filtered.length - 1) * fraction)));
+  return filtered[index];
+}
+
+function niceCeiling(value, step) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return step;
+  }
+  return Math.ceil(value / step) * step;
+}
+
+function markerRadius(magnitude) {
+  if (!Number.isFinite(magnitude)) {
+    return 4;
+  }
+  return Math.max(4, Math.min(16, 2.4 + magnitude * 1.8));
+}
+
+function shortDateLabel(isoDate) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function shortMonthLabel(isoMonth) {
+  const [year, month] = isoMonth.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString("en-US", {
+    month: "short",
+    year: "2-digit",
+    timeZone: "UTC",
+  });
 }
 
 function shiftIsoDate(isoDate, deltaDays) {
@@ -685,43 +1165,19 @@ function shiftMonth(isoDate, deltaMonths) {
   return dt.toISOString().slice(0, 10);
 }
 
-function diffDaysInclusive(startDate, endDate) {
-  const start = Date.parse(`${startDate}T00:00:00Z`);
-  const end = Date.parse(`${endDate}T00:00:00Z`);
-  return Math.max(1, Math.round((end - start) / 86400000) + 1);
+function distanceBetween(ax, ay, bx, by) {
+  return Math.hypot(ax - bx, ay - by);
 }
 
-function magnitudeColor(magnitude) {
-  if (!Number.isFinite(magnitude)) {
-    return "#7c8b95";
+function splitBubbleLabel(label) {
+  const parts = label.split(" ");
+  if (parts.length === 1) {
+    return parts;
   }
-  if (magnitude >= 6) {
-    return "#9c2a1a";
+  if (parts.length === 2) {
+    return parts;
   }
-  if (magnitude >= 5) {
-    return "#c95c1b";
-  }
-  if (magnitude >= 4) {
-    return "#df9d27";
-  }
-  if (magnitude >= 3) {
-    return "#2d9680";
-  }
-  return "#7ca7a0";
-}
-
-function markerRadius(magnitude) {
-  if (!Number.isFinite(magnitude)) {
-    return 4;
-  }
-  return Math.max(4, Math.min(16, 2.5 + magnitude * 2));
-}
-
-function formatEventMoment(row) {
-  if (!row) {
-    return "No events";
-  }
-  return `${row.event_date_et} ${row.event_time_et || "--"}`;
+  return [parts.slice(0, Math.ceil(parts.length / 2)).join(" "), parts.slice(Math.ceil(parts.length / 2)).join(" ")];
 }
 
 function formatMetaTimestamp(value) {
@@ -733,13 +1189,6 @@ function formatMetaTimestamp(value) {
 
 function formatNumber(value) {
   return new Intl.NumberFormat("en-US").format(value || 0);
-}
-
-function formatPercent(part, whole) {
-  if (!whole) {
-    return "0%";
-  }
-  return `${((part / whole) * 100).toFixed(1)}%`;
 }
 
 function withCacheBust(url) {
@@ -764,4 +1213,31 @@ function showError(message) {
 function clearError() {
   elements["error-banner"].hidden = true;
   elements["error-banner"].textContent = "";
+}
+
+function clearSvg(svg) {
+  while (svg.firstChild) {
+    svg.removeChild(svg.firstChild);
+  }
+}
+
+function svgNode(tag, attrs, textContent = "") {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  Object.entries(attrs || {}).forEach(([key, value]) => {
+    node.setAttribute(key, String(value));
+  });
+  if (textContent) {
+    node.textContent = textContent;
+  }
+  return node;
+}
+
+function emptyText(svg, message) {
+  const viewBox = svg.getAttribute("viewBox").split(" ").map(Number);
+  return svgNode("text", {
+    x: viewBox[2] / 2,
+    y: viewBox[3] / 2,
+    class: "chart-empty-text",
+    "text-anchor": "middle",
+  }, message);
 }
