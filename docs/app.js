@@ -18,18 +18,18 @@ const MAG_BANDS = [
   { label: "Extreme", maxExclusive: Infinity, color: "#7f1d1d", rag: "Red" },
 ];
 const BUBBLE_COLORS = [
-  "#0e7a6c",
-  "#2f8f83",
-  "#6aa564",
-  "#a7ba4c",
-  "#d6a733",
-  "#d47a2c",
-  "#c95a46",
-  "#5d88b6",
-  "#8c6bb1",
-  "#c06d95",
-  "#597746",
-  "#7a8e9f",
+  "#9ec8e7",
+  "#8a7f7b",
+  "#ffbe78",
+  "#67b95f",
+  "#c8aa37",
+  "#dca5cc",
+  "#7bc7c6",
+  "#5d84ba",
+  "#ef8d2f",
+  "#b16db3",
+  "#d7d2ce",
+  "#49a2a8",
 ];
 const DEPARTMENT_GRID_SIZE = 1;
 
@@ -86,6 +86,8 @@ function cacheElements() {
     "band-note",
     "occurrence-chart",
     "occurrence-note",
+    "rolling-chart",
+    "rolling-note",
     "month-chart",
     "month-note",
     "year-chart",
@@ -93,6 +95,8 @@ function cacheElements() {
     "scatter-chart",
     "scatter-note",
     "scatter-legend",
+    "time-scatter-chart",
+    "time-scatter-note",
     "bubble-chart",
     "bubble-note",
     "map-note",
@@ -443,6 +447,7 @@ function renderMagnitudeBands(rows) {
 
 function renderOccurrenceSeries(rows, startDate, endDate) {
   const buckets = buildDailyBuckets(rows, startDate, endDate);
+  const rollingBuckets = buildRollingAverageSeries(buckets, 7);
   drawLineChart(elements["occurrence-chart"], buckets, {
     color: "#0d7a6b",
     fill: "rgba(13, 122, 107, 0.18)",
@@ -453,7 +458,19 @@ function renderOccurrenceSeries(rows, startDate, endDate) {
       `${formatNumber(point.value)} earthquake${point.value === 1 ? "" : "s"}`
     ),
   });
+  drawLineChart(elements["rolling-chart"], rollingBuckets, {
+    color: "#1d5f92",
+    fill: "rgba(93, 132, 186, 0.16)",
+    maxXTicks: 8,
+    yLabel: "7-day avg",
+    yTickFormatter: (value) => value.toFixed(1),
+    tooltipFormatter: (point) => tooltipMarkup(
+      formatTemporalLabel(point.label),
+      `${point.value.toFixed(2)} average earthquakes per day over the trailing 7 days`
+    ),
+  });
   elements["occurrence-note"].textContent = `${formatNumber(rows.length)} events from ${formatTemporalLabel(startDate)} to ${formatTemporalLabel(endDate)}`;
+  elements["rolling-note"].textContent = rollingBuckets.length ? "Smooths short spikes so the trend is easier to read" : "No rolling trend";
 }
 
 function renderMonthYearSeries(rows) {
@@ -487,28 +504,47 @@ function renderMonthYearSeries(rows) {
 
 function renderScatterPlot(rows) {
   const svg = elements["scatter-chart"];
+  const timeSvg = elements["time-scatter-chart"];
   const legend = elements["scatter-legend"];
   legend.innerHTML = "";
 
-  const validRows = rows.filter((row) => Number.isFinite(row.magnitud) && Number.isFinite(row.prof));
-  if (!validRows.length) {
+  const magnitudeRows = rows.filter((row) => Number.isFinite(row.magnitud));
+  const validRows = magnitudeRows.filter((row) => Number.isFinite(row.prof));
+  if (!magnitudeRows.length) {
     clearSvg(svg);
+    clearSvg(timeSvg);
     svg.appendChild(emptyText(svg, "No magnitude/depth pairs in the filtered slice."));
+    timeSvg.appendChild(emptyText(timeSvg, "No time scatter data in the filtered slice."));
     elements["scatter-note"].textContent = "No scatterplot data.";
+    elements["time-scatter-note"].textContent = "No time scatter data.";
     return;
   }
 
-  const sampledRows = sampleRows(validRows, SCATTER_LIMIT);
-  const depthMax = Math.max(10, niceCeiling(percentile(sampledRows.map((row) => row.prof), 0.98), 10));
-  const magMax = Math.max(4, niceCeiling(Math.max(...sampledRows.map((row) => row.magnitud)), 1));
-  renderScatterLegend(legend, sampledRows);
-  drawScatterPlot(svg, sampledRows, {
-    xMax: depthMax,
+  const sampledRows = validRows.length ? sampleRows(validRows, SCATTER_LIMIT) : [];
+  const timeSampledRows = sampleRows(magnitudeRows, SCATTER_LIMIT);
+  const depthMax = sampledRows.length ? Math.max(10, niceCeiling(percentile(sampledRows.map((row) => row.prof), 0.98), 10)) : 10;
+  const magMax = Math.max(4, niceCeiling(Math.max(...timeSampledRows.map((row) => row.magnitud)), 1));
+  const chronologicalRows = [...timeSampledRows].sort((left, right) => left.eventMs - right.eventMs);
+  renderScatterLegend(legend, timeSampledRows);
+  if (sampledRows.length) {
+    drawScatterPlot(svg, sampledRows, {
+      xMax: depthMax,
+      yMax: magMax,
+      xLabel: "Depth (km)",
+      yLabel: "Magnitude",
+    });
+  } else {
+    clearSvg(svg);
+    svg.appendChild(emptyText(svg, "No magnitude/depth pairs in the filtered slice."));
+  }
+  drawTimeScatterPlot(timeSvg, chronologicalRows, {
     yMax: magMax,
-    xLabel: "Depth (km)",
     yLabel: "Magnitude",
   });
-  elements["scatter-note"].textContent = `${formatNumber(sampledRows.length)} sampled points colored by magnitude band and RAG category`;
+  elements["scatter-note"].textContent = sampledRows.length
+    ? `${formatNumber(sampledRows.length)} sampled points colored by magnitude band and RAG category`
+    : "No depth values are available in the current filtered slice";
+  elements["time-scatter-note"].textContent = "Shows when stronger earthquakes cluster within the filtered time window";
 }
 
 function renderScatterLegend(container, rows) {
@@ -554,7 +590,7 @@ function renderBubbleChart(rows) {
   const maxCount = ranked[0].count || 1;
   const items = ranked.map((item) => ({
     ...item,
-    radius: 34 + Math.sqrt(item.count / maxCount) * 58,
+    radius: 26 + Math.sqrt(item.count / maxCount) * 92,
   }));
   const bubbles = layoutBubbles(items, width, height);
   drawBubbleChart(svg, bubbles, maxCount);
@@ -762,6 +798,21 @@ function buildRollingMonthBuckets(rows, monthWindow) {
   return output;
 }
 
+function buildRollingAverageSeries(series, windowSize) {
+  if (!series.length) {
+    return [];
+  }
+  return series.map((point, index) => {
+    const start = Math.max(0, index - windowSize + 1);
+    const window = series.slice(start, index + 1);
+    const average = window.reduce((sum, item) => sum + item.value, 0) / window.length;
+    return {
+      ...point,
+      value: average,
+    };
+  });
+}
+
 function buildYearBuckets(rows) {
   if (!rows.length) {
     return [];
@@ -817,14 +868,14 @@ function drawLineChart(svg, series, options) {
       })
     );
 
-    const value = Math.round(maxValue - (maxValue / 4) * line);
+    const value = maxValue - (maxValue / 4) * line;
     svg.appendChild(
       svgNode("text", {
         x: pad.left - 8,
         y: y + 4,
         class: "axis-text",
         "text-anchor": "end",
-      }, formatNumber(value))
+      }, options.yTickFormatter ? options.yTickFormatter(value) : formatNumber(Math.round(value)))
     );
   }
 
@@ -978,6 +1029,98 @@ function drawScatterPlot(svg, rows, options) {
   }, options.yLabel));
 }
 
+function drawTimeScatterPlot(svg, rows, options) {
+  clearSvg(svg);
+  if (!rows.length) {
+    svg.appendChild(emptyText(svg, "No time scatter data available."));
+    return;
+  }
+
+  const width = 700;
+  const height = 320;
+  const pad = { top: 20, right: 18, bottom: 52, left: 58 };
+  const innerWidth = width - pad.left - pad.right;
+  const innerHeight = height - pad.top - pad.bottom;
+  const minMs = rows[0].eventMs;
+  const maxMs = rows[rows.length - 1].eventMs;
+  const rangeMs = Math.max(1, maxMs - minMs);
+  const xScale = (value) => pad.left + ((value - minMs) / rangeMs) * innerWidth;
+  const yScale = (value) => pad.top + innerHeight - (value / options.yMax) * innerHeight;
+
+  for (let index = 0; index <= 4; index += 1) {
+    const y = pad.top + (innerHeight / 4) * index;
+    const value = (options.yMax / 4) * (4 - index);
+    svg.appendChild(svgNode("line", {
+      x1: pad.left,
+      x2: width - pad.right,
+      y1: y,
+      y2: y,
+      class: "grid-line",
+    }));
+    svg.appendChild(svgNode("text", {
+      x: pad.left - 10,
+      y: y + 4,
+      class: "axis-text",
+      "text-anchor": "end",
+    }, value.toFixed(1)));
+  }
+
+  for (let index = 0; index <= 5; index += 1) {
+    const ms = minMs + (rangeMs / 5) * index;
+    const x = pad.left + (innerWidth / 5) * index;
+    svg.appendChild(svgNode("line", {
+      x1: x,
+      x2: x,
+      y1: pad.top,
+      y2: height - pad.bottom,
+      class: "grid-line",
+    }));
+    svg.appendChild(svgNode("text", {
+      x,
+      y: height - 16,
+      class: "axis-text",
+      "text-anchor": "middle",
+    }, timeAxisLabel(ms, rangeMs)));
+  }
+
+  rows.forEach((row) => {
+    const point = svgNode("circle", {
+      cx: xScale(row.eventMs),
+      cy: yScale(row.magnitud),
+      r: Math.max(3.5, Math.min(8.5, 3 + (Number.isFinite(row.prof) ? Math.min(row.prof, 180) / 60 : 0))),
+      fill: row.bandColor,
+      "fill-opacity": 0.78,
+      stroke: "#17313e",
+      "stroke-width": 0.6,
+      class: "scatter-point",
+    });
+    attachTooltip(point, (event) => {
+      showTooltip(
+        event,
+        tooltipMarkup(
+          `${escapeHtml(row.code || "Earthquake")} · ${escapeHtml(row.magnitudeBand)}`,
+          `${escapeHtml(formatTemporalLabel(row.event_date_et))}<br />Magnitude ${row.magnitud.toFixed(1)}<br />${Number.isFinite(row.prof) ? `Depth ${row.prof} km` : "Depth unavailable"} · ${escapeHtml(row.departamento || "Unknown")}`
+        )
+      );
+    });
+    svg.appendChild(point);
+  });
+
+  svg.appendChild(svgNode("text", {
+    x: width / 2,
+    y: height - 2,
+    class: "axis-title",
+    "text-anchor": "middle",
+  }, "Event date (ET)"));
+  svg.appendChild(svgNode("text", {
+    x: 18,
+    y: pad.top + innerHeight / 2,
+    class: "axis-title",
+    transform: `rotate(-90 18 ${pad.top + innerHeight / 2})`,
+    "text-anchor": "middle",
+  }, options.yLabel));
+}
+
 function drawBubbleChart(svg, bubbles, maxCount) {
   clearSvg(svg);
   if (!bubbles.length) {
@@ -991,9 +1134,9 @@ function drawBubbleChart(svg, bubbles, maxCount) {
       cy: bubble.y,
       r: bubble.radius,
       fill: bubble.color,
-      "fill-opacity": 0.74,
-      stroke: "#16303d",
-      "stroke-width": 1,
+      "fill-opacity": 0.96,
+      stroke: "rgba(255,255,255,0.92)",
+      "stroke-width": 2,
       class: "bubble-node",
     });
     attachTooltip(circle, (event) => {
@@ -1034,22 +1177,24 @@ function drawBubbleChart(svg, bubbles, maxCount) {
 
 function layoutBubbles(items, width, height) {
   const placed = [];
-  const centerX = width / 2;
-  const centerY = height / 2;
+  const leadX = Math.max(items[0]?.radius + 24 || 0, width * 0.2);
+  const leadY = height * 0.5;
+  const clusterX = width * 0.62;
+  const clusterY = height * 0.5;
   const margin = 16;
 
   items.forEach((item, index) => {
     if (index === 0) {
-      placed.push({ ...item, x: centerX, y: centerY });
+      placed.push({ ...item, x: leadX, y: leadY });
       return;
     }
 
     let position = null;
-    for (let spiral = 0; spiral < 420 && !position; spiral += 1) {
-      const angle = spiral * 0.55;
-      const distance = 18 + spiral * 3.2;
-      const x = centerX + Math.cos(angle) * distance * 1.08;
-      const y = centerY + Math.sin(angle) * distance * 0.76;
+    for (let spiral = 0; spiral < 520 && !position; spiral += 1) {
+      const angle = spiral * 0.48;
+      const distance = item.radius + 16 + spiral * 2.2;
+      const x = clusterX + Math.cos(angle) * distance * 1.26;
+      const y = clusterY + Math.sin(angle) * distance * 0.84;
       if (x - item.radius < margin || x + item.radius > width - margin) {
         continue;
       }
@@ -1064,8 +1209,8 @@ function layoutBubbles(items, width, height) {
     if (!position) {
       position = {
         ...item,
-        x: margin + item.radius + (index % 4) * 140,
-        y: margin + item.radius + Math.floor(index / 4) * 120,
+        x: Math.min(width - item.radius - margin, clusterX + (index % 4) * 86),
+        y: Math.min(height - item.radius - margin, margin + item.radius + Math.floor(index / 4) * 88),
       };
     }
     placed.push(position);
@@ -1305,6 +1450,17 @@ function shortMonthLabel(isoMonth) {
     timeZone: "UTC",
   });
   return label.replace(" ", " '");
+}
+
+function timeAxisLabel(ms, rangeMs) {
+  const date = new Date(ms);
+  if (rangeMs <= 1000 * 60 * 60 * 24 * 45) {
+    return date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  }
+  if (rangeMs <= 1000 * 60 * 60 * 24 * 550) {
+    return date.toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" }).replace(" ", " '");
+  }
+  return date.toLocaleDateString("en-US", { year: "numeric", timeZone: "UTC" });
 }
 
 function shiftIsoDate(isoDate, deltaDays) {

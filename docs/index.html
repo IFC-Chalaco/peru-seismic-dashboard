@@ -137,8 +137,25 @@
           </div>
           <p id="occurrence-note" class="muted-text"></p>
         </div>
-        <div class="svg-wrap">
-          <svg id="occurrence-chart" class="chart-svg" viewBox="0 0 700 320" preserveAspectRatio="none"></svg>
+        <div class="dual-series-grid">
+          <section class="mini-series">
+            <div class="mini-series-head">
+              <h3>Daily occurrences</h3>
+              <p class="muted-text">Event count by ET day</p>
+            </div>
+            <div class="svg-wrap compact">
+              <svg id="occurrence-chart" class="chart-svg" viewBox="0 0 700 280" preserveAspectRatio="none"></svg>
+            </div>
+          </section>
+          <section class="mini-series">
+            <div class="mini-series-head">
+              <h3>7-day rolling average</h3>
+              <p id="rolling-note" class="muted-text"></p>
+            </div>
+            <div class="svg-wrap compact">
+              <svg id="rolling-chart" class="chart-svg" viewBox="0 0 700 280" preserveAspectRatio="none"></svg>
+            </div>
+          </section>
         </div>
       </article>
     </section>
@@ -182,8 +199,25 @@
           <p id="scatter-note" class="muted-text"></p>
         </div>
         <div id="scatter-legend" class="scatter-legend"></div>
-        <div class="svg-wrap">
-          <svg id="scatter-chart" class="chart-svg" viewBox="0 0 700 360" preserveAspectRatio="none"></svg>
+        <div class="dual-series-grid">
+          <section class="mini-series">
+            <div class="mini-series-head">
+              <h3>Magnitude vs depth</h3>
+              <p class="muted-text">Magnitude band color, depth on x-axis</p>
+            </div>
+            <div class="svg-wrap compact">
+              <svg id="scatter-chart" class="chart-svg" viewBox="0 0 700 320" preserveAspectRatio="none"></svg>
+            </div>
+          </section>
+          <section class="mini-series">
+            <div class="mini-series-head">
+              <h3>Magnitude vs event date</h3>
+              <p id="time-scatter-note" class="muted-text"></p>
+            </div>
+            <div class="svg-wrap compact">
+              <svg id="time-scatter-chart" class="chart-svg" viewBox="0 0 700 320" preserveAspectRatio="none"></svg>
+            </div>
+          </section>
         </div>
       </article>
     </section>

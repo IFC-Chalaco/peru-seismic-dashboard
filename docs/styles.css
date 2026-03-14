@@ -343,6 +343,13 @@ select {
   height: 320px;
 }
 
+#occurrence-chart,
+#rolling-chart,
+#scatter-chart,
+#time-scatter-chart {
+  height: 280px;
+}
+
 #month-chart,
 #year-chart {
   height: 250px;
@@ -552,14 +559,14 @@ tbody tr:hover {
 }
 
 .bubble-label {
-  fill: #fff;
+  fill: #1a2430;
   font-family: "Space Grotesk", sans-serif;
   font-weight: 700;
   pointer-events: none;
 }
 
 .bubble-count {
-  fill: rgba(255, 255, 255, 0.86);
+  fill: rgba(22, 40, 48, 0.72);
   font-size: 0.76em;
 }
 
@@ -682,6 +689,10 @@ code {
   }
 
   .chart-svg,
+  #occurrence-chart,
+  #rolling-chart,
+  #scatter-chart,
+  #time-scatter-chart,
   #month-chart,
   #year-chart {
     height: 260px;
