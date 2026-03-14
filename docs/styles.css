@@ -123,6 +123,13 @@ select {
   line-height: 1.72;
 }
 
+.hero-credit {
+  margin: 14px 0 0;
+  color: var(--accent);
+  font-size: 0.96rem;
+  font-weight: 700;
+}
+
 .hero-actions,
 .control-actions {
   display: flex;
@@ -538,6 +545,12 @@ tbody tr:hover {
   font-weight: 700;
 }
 
+.chart-hit-area,
+.scatter-point,
+.bubble-node {
+  cursor: pointer;
+}
+
 .bubble-label {
   fill: #fff;
   font-family: "Space Grotesk", sans-serif;
@@ -578,6 +591,33 @@ tbody tr:hover {
 }
 
 .map-popup .meta-line {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.chart-tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 2000;
+  max-width: 260px;
+  padding: 10px 12px;
+  border: 1px solid rgba(22, 40, 48, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 252, 246, 0.96);
+  box-shadow: 0 20px 45px rgba(22, 40, 48, 0.18);
+  color: var(--text);
+  line-height: 1.45;
+  pointer-events: none;
+  backdrop-filter: blur(12px);
+}
+
+.chart-tooltip strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.chart-tooltip .tooltip-meta {
   color: var(--muted);
   font-size: 0.84rem;
 }
