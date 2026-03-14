@@ -138,6 +138,12 @@ Geospatial-ready feed:
 
 https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live.geojson
 
+The GeoJSON properties include filter-friendly date fields such as:
+- `event_date_utc`, `event_time_utc`
+- `event_date_local`, `event_time_local`
+- `event_date_et`, `event_time_et`
+- `event_utc_date_key`, `event_local_date_key`, `event_et_date_key`
+
 ---
 
 ## 🧠 Data Model (Curated Feed)

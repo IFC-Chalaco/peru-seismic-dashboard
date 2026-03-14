@@ -629,6 +629,24 @@ def iso_utc_to_zone_fields(
     return local_dt.isoformat(), local_dt.date().isoformat(), local_dt.strftime("%H:%M:%S")
 
 
+def add_date_filter_properties(
+    properties: dict[str, Any],
+    *,
+    prefix: str,
+    event_date: str | None,
+) -> None:
+    if not event_date:
+        return
+    try:
+        parsed_date = datetime.strptime(event_date, "%Y-%m-%d").date()
+    except ValueError:
+        return
+    properties[f"{prefix}_year"] = parsed_date.year
+    properties[f"{prefix}_month"] = parsed_date.month
+    properties[f"{prefix}_day"] = parsed_date.day
+    properties[f"{prefix}_date_key"] = int(parsed_date.strftime("%Y%m%d"))
+
+
 def iso_to_utc_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -1973,7 +1991,15 @@ def export_geojson(conn: sqlite3.Connection, geojson_path: Path) -> None:
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         """
-        SELECT objectid, lat, lon, raw_attributes_json, event_ts_utc, event_ts_local
+        SELECT
+            objectid,
+            lat,
+            lon,
+            raw_attributes_json,
+            event_ts_utc,
+            event_ts_local,
+            event_date_local,
+            event_time_local
         FROM raw_events
         ORDER BY objectid DESC
         """
@@ -1988,13 +2014,38 @@ def export_geojson(conn: sqlite3.Connection, geojson_path: Path) -> None:
         if not isinstance(properties, dict):
             properties = {}
         properties["event_ts_utc"] = row["event_ts_utc"]
-        properties["event_ts_local"] = row["event_ts_local"]
+        utc_dt = iso_to_utc_datetime(row["event_ts_utc"])
+        if utc_dt is not None:
+            properties["event_date_utc"] = utc_dt.date().isoformat()
+            properties["event_time_utc"] = utc_dt.strftime("%H:%M:%S")
+            add_date_filter_properties(
+                properties,
+                prefix="event_utc",
+                event_date=properties["event_date_utc"],
+            )
+
+        event_ts_local, event_date_local, event_time_local = iso_utc_to_zone_fields(
+            row["event_ts_utc"], LOCAL_TZ
+        )
+        properties["event_ts_local"] = event_ts_local or row["event_ts_local"]
+        properties["event_date_local"] = event_date_local or row["event_date_local"]
+        properties["event_time_local"] = event_time_local or row["event_time_local"]
+        add_date_filter_properties(
+            properties,
+            prefix="event_local",
+            event_date=properties.get("event_date_local"),
+        )
         event_ts_et, event_date_et, event_time_et = iso_utc_to_zone_fields(
             row["event_ts_utc"], ET_TZ
         )
         properties["event_ts_et"] = event_ts_et
         properties["event_date_et"] = event_date_et
         properties["event_time_et"] = event_time_et
+        add_date_filter_properties(
+            properties,
+            prefix="event_et",
+            event_date=event_date_et,
+        )
 
         lat = row["lat"]
         lon = row["lon"]
