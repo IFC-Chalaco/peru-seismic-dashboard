@@ -5,6 +5,10 @@ on:
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
+concurrency:
+  group: igp-seismic-refresh-main
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -15,6 +19,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: main
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -44,6 +50,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
           git add seismic_bi_stream/data/state.json
           git add seismic_bi_stream/exports/earthquakes_live.csv
           git add seismic_bi_stream/exports/earthquakes_live_curated.csv
