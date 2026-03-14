@@ -32,6 +32,16 @@ All updates run automatically in GitHub Actions — no local machine required.
 
 https://public.tableau.com/views/ReportesSismicosPeru/Dashboard1
 
+### GitHub Project Site
+
+This repository also includes a lightweight GitHub Pages site that embeds the Tableau dashboard and documents the published data feeds:
+
+`/docs/index.html`
+
+After enabling GitHub Pages for the `main` branch `/docs` folder, the site will be available at:
+
+https://ifc-chalaco.github.io/peru-seismic-dashboard/
+
 ---
 
 ## 🏗 Architecture

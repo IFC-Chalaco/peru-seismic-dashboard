@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Peru Seismic Dashboard</title>
+  <style>
+    :root {
+      --bg: #f4efe7;
+      --ink: #1a2433;
+      --muted: #54606f;
+      --panel: rgba(255, 252, 247, 0.86);
+      --line: rgba(26, 36, 51, 0.12);
+      --accent: #0f766e;
+      --accent-strong: #0b5f58;
+      --sand: #d6b98a;
+      --shadow: 0 24px 80px rgba(32, 41, 55, 0.14);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.16), transparent 34%),
+        radial-gradient(circle at top right, rgba(214, 185, 138, 0.24), transparent 28%),
+        linear-gradient(180deg, #fbf7f1 0%, var(--bg) 50%, #f2ebe0 100%);
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .shell {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 32px 0 56px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      padding: 28px;
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 248, 238, 0.84)),
+        linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(214, 185, 138, 0.12));
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -80px -120px auto;
+      width: 320px;
+      height: 320px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(15, 118, 110, 0.18), transparent 68%);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(15, 118, 110, 0.16);
+      background: rgba(15, 118, 110, 0.08);
+      color: var(--accent-strong);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 16px 0 12px;
+      max-width: 780px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(2.4rem, 5vw, 4.5rem);
+      line-height: 0.98;
+      letter-spacing: -0.04em;
+    }
+
+    .lead {
+      max-width: 780px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 1.06rem;
+      line-height: 1.65;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 14px;
+      margin-top: 26px;
+    }
+
+    .meta-card,
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--panel);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 12px 36px rgba(32, 41, 55, 0.07);
+    }
+
+    .meta-card {
+      padding: 16px;
+    }
+
+    .meta-label {
+      color: var(--muted);
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .meta-value {
+      margin-top: 8px;
+      font-size: 1.2rem;
+      font-weight: 700;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.65fr) minmax(300px, 0.85fr);
+      gap: 22px;
+      margin-top: 24px;
+    }
+
+    .panel {
+      padding: 18px;
+    }
+
+    .panel h2,
+    .panel h3 {
+      margin: 0 0 10px;
+      font-size: 1rem;
+      letter-spacing: 0.01em;
+      text-transform: uppercase;
+    }
+
+    .panel p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .viz-frame {
+      margin-top: 14px;
+      border: 1px solid rgba(26, 36, 51, 0.1);
+      border-radius: 18px;
+      overflow: hidden;
+      background: #fff;
+      aspect-ratio: 16 / 10;
+    }
+
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+    }
+
+    .stack {
+      display: grid;
+      gap: 16px;
+    }
+
+    .link-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .link-card {
+      display: block;
+      padding: 14px 15px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      text-decoration: none;
+      background: rgba(255, 255, 255, 0.68);
+      transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+    }
+
+    .link-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(15, 118, 110, 0.28);
+      background: rgba(255, 255, 255, 0.94);
+    }
+
+    .link-title {
+      font-weight: 700;
+    }
+
+    .link-copy {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.45;
+    }
+
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 18px;
+      border-radius: 999px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .btn-secondary {
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.66);
+    }
+
+    .note {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.94rem;
+    }
+
+    @media (max-width: 900px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .shell {
+        width: min(100vw - 20px, 1180px);
+        padding-top: 16px;
+      }
+
+      .hero,
+      .panel {
+        border-radius: 22px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="eyebrow">Peru Seismic Intelligence</div>
+      <h1>Interactive earthquake monitoring for Peru, backed by an automated data pipeline.</h1>
+      <p class="lead">
+        This project combines historical records, annual report data, and live seismic updates from official IGP sources.
+        The dashboard below is published in Tableau Public, while the underlying CSV and GeoJSON feeds are refreshed automatically in GitHub.
+      </p>
+
+      <div class="meta">
+        <article class="meta-card">
+          <div class="meta-label">Coverage</div>
+          <div class="meta-value">1960 to present</div>
+        </article>
+        <article class="meta-card">
+          <div class="meta-label">Live updates</div>
+          <div class="meta-value">GitHub Actions</div>
+        </article>
+        <article class="meta-card">
+          <div class="meta-label">Primary BI layer</div>
+          <div class="meta-value">Tableau Public</div>
+        </article>
+        <article class="meta-card">
+          <div class="meta-label">Time zone</div>
+          <div class="meta-value">UTC and ET fields</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <h2>Embedded Dashboard</h2>
+        <p>
+          This page embeds the live Tableau Public dashboard so viewers can explore the same visual experience directly from the project site.
+        </p>
+        <div class="viz-frame">
+          <iframe
+            title="Reportes Sismicos Peru Dashboard"
+            src="https://public.tableau.com/views/ReportesSismicosPeru/Dashboard1?:showVizHome=no&:embed=true"
+            loading="lazy"
+            allowfullscreen>
+          </iframe>
+        </div>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://public.tableau.com/views/ReportesSismicosPeru/Dashboard1?:showVizHome=no" target="_blank" rel="noreferrer">Open in Tableau Public</a>
+          <a class="btn btn-secondary" href="https://github.com/IFC-Chalaco/peru-seismic-dashboard" target="_blank" rel="noreferrer">Open Repository</a>
+        </div>
+      </article>
+
+      <aside class="stack">
+        <article class="panel">
+          <h3>Published Data Feeds</h3>
+          <p>Use these links for downstream analysis, QA checks, or alternate BI tools.</p>
+          <div class="link-list">
+            <a class="link-card" href="https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live_curated.csv" target="_blank" rel="noreferrer">
+              <div class="link-title">Curated CSV</div>
+              <div class="link-copy">Primary Tableau and Power BI feed with standardized timestamps and deduped events.</div>
+            </a>
+            <a class="link-card" href="https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live.csv" target="_blank" rel="noreferrer">
+              <div class="link-title">Full CSV</div>
+              <div class="link-copy">Raw merged export with source-level detail for auditing and engineering analysis.</div>
+            </a>
+            <a class="link-card" href="https://raw.githubusercontent.com/IFC-Chalaco/peru-seismic-dashboard/main/seismic_bi_stream/exports/earthquakes_live.geojson" target="_blank" rel="noreferrer">
+              <div class="link-title">GeoJSON</div>
+              <div class="link-copy">Geospatial feed for GIS tools, web maps, and spatial workflows.</div>
+            </a>
+          </div>
+        </article>
+
+        <article class="panel">
+          <h3>Refresh Logic</h3>
+          <p>
+            GitHub Actions runs the ingestion pipeline on a schedule, commits refreshed export files back to the repository, and keeps the dashboard data source current without requiring a local machine to stay on.
+          </p>
+          <p class="note">
+            The dashboard itself is Tableau Public. This project site is the presentation layer that embeds it and documents the live data products behind it.
+          </p>
+        </article>
+      </aside>
+    </section>
+  </main>
+</body>
+</html>
