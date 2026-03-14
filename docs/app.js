@@ -381,7 +381,7 @@ function applyFilters() {
   renderOccurrenceSeries(state.filteredRows, startDate, endDate);
   renderMonthYearSeries(state.scopedRows);
   renderScatterPlot(state.filteredRows);
-  renderBubbleChart(state.filteredRows);
+  renderBubbleChart(state.filteredRows, startDate, endDate);
   renderMap();
   renderRecentEvents();
 }
@@ -559,7 +559,7 @@ function renderScatterLegend(container, rows) {
   });
 }
 
-function renderBubbleChart(rows) {
+function renderBubbleChart(rows, startDate, endDate) {
   const svg = elements["bubble-chart"];
   const counts = new Map();
   rows.forEach((row) => {
@@ -579,7 +579,7 @@ function renderBubbleChart(rows) {
   if (!ranked.length) {
     clearSvg(svg);
     svg.appendChild(emptyText(svg, "No department distribution available."));
-    elements["bubble-note"].textContent = "No departamentos match the current filter.";
+    elements["bubble-note"].textContent = `No departamentos match ${formatTemporalLabel(startDate)} to ${formatTemporalLabel(endDate)}.`;
     return;
   }
 
@@ -592,7 +592,7 @@ function renderBubbleChart(rows) {
   }));
   const bubbles = layoutBubbles(items, width, height);
   drawBubbleChart(svg, bubbles, maxCount);
-  elements["bubble-note"].textContent = `Top ${ranked.length} departamentos in the current filtered slice`;
+  elements["bubble-note"].textContent = `Top ${ranked.length} departamentos from ${formatNumber(rows.length)} filtered events, ${formatTemporalLabel(startDate)} to ${formatTemporalLabel(endDate)}`;
 }
 
 function renderMap() {
@@ -1203,7 +1203,7 @@ function drawBubbleChart(svg, bubbles, maxCount) {
         event,
         tooltipMarkup(
           escapeHtml(bubble.label),
-          `${formatNumber(bubble.count)} earthquakes in current scope<br />${share}% of the largest bubble`
+          `${formatNumber(bubble.count)} earthquakes in the current filtered slice<br />${share}% of the largest bubble`
         )
       );
     });
