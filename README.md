@@ -28,13 +28,26 @@ All updates run automatically in GitHub Actions — no local machine required.
 
 ## 📊 Interactive Dashboard
 
-🔗 **View the Live Dashboard on Tableau Public**
+🔗 **View the Live Dashboard on GitHub Pages**
+
+https://ifc-chalaco.github.io/peru-seismic-dashboard/
+
+### Published Website Data
+
+The GitHub Pages site reads from:
+
+- `docs/data/earthquakes_live_curated.csv`
+- `docs/data/dashboard_meta.json`
+
+These files are refreshed automatically by the same GitHub Actions pipeline that updates the export feeds.
+
+### Tableau Public
 
 https://public.tableau.com/views/ReportesSismicosPeru/Dashboard1
 
 ### GitHub Project Site
 
-This repository also includes a lightweight GitHub Pages site that embeds the Tableau dashboard and documents the published data feeds:
+This repository includes a native GitHub Pages dashboard under:
 
 `/docs/index.html`
 

@@ -49,6 +49,8 @@ jobs:
           git add seismic_bi_stream/exports/earthquakes_live_curated.csv
           git add seismic_bi_stream/exports/earthquakes_live_preview.csv
           git add seismic_bi_stream/exports/earthquakes_live.geojson
+          git add docs/data/earthquakes_live_curated.csv
+          git add docs/data/dashboard_meta.json
           if git diff --staged --quiet; then
             echo "No data changes to commit."
           else

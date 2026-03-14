@@ -51,6 +51,8 @@ class RunSummary:
     curated_csv_path: Path
     preview_csv_path: Path
     geojson_path: Path
+    site_csv_path: Path
+    site_meta_path: Path
 
 
 def utc_now_iso() -> str:
@@ -1878,11 +1880,10 @@ def export_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
     return len(rows)
 
 
-def export_curated_csv(
+def build_curated_export_rows(
     conn: sqlite3.Connection,
-    csv_path: Path,
     limit_rows: int | None = None,
-) -> int:
+) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     limit_clause = ""
     query_params: tuple[Any, ...] = ()
@@ -1915,6 +1916,54 @@ def export_curated_csv(
         query_params,
     ).fetchall()
 
+    curated_rows: list[dict[str, Any]] = []
+    seen_keys: set[tuple[Any, ...]] = set()
+    for row in rows:
+        code_value = str(row["code"]).strip() if row["code"] is not None else ""
+        canonical_code = canonical_event_code(code_value)
+        if canonical_code:
+            dedupe_key: tuple[Any, ...] = ("code", canonical_code)
+        else:
+            dedupe_key = (
+                "fallback",
+                row["event_ts_utc"],
+                row["lat"],
+                row["lon"],
+                row["magnitud"],
+                row["prof"],
+            )
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+
+        event_ts_et, event_date_et, event_time_et = iso_utc_to_zone_fields(
+            row["event_ts_utc"], ET_TZ
+        )
+        curated_rows.append(
+            {
+                "objectid": row["objectid"],
+                "code": canonical_code if canonical_code else row["code"],
+                "event_ts_et": event_ts_et,
+                "event_date_et": event_date_et,
+                "event_time_et": event_time_et,
+                "event_ts_utc": row["event_ts_utc"],
+                "lat": row["lat"],
+                "lon": row["lon"],
+                "magnitud": row["magnitud"],
+                "prof": row["prof"],
+                "profundidad": row["profundidad"],
+                "intensidad": row["intensidad"],
+                "departamento": row["departamento"],
+                "referencia": row["referencia"],
+                "ultimo": row["ultimo"],
+                "reporte": row["reporte"],
+                "ingested_at_utc": row["ingested_at_utc"],
+            }
+        )
+    return curated_rows
+
+
+def write_curated_csv(rows: list[dict[str, Any]], csv_path: Path) -> int:
     fieldnames = [
         "objectid",
         "code",
@@ -1934,57 +1983,59 @@ def export_curated_csv(
         "reporte",
         "ingested_at_utc",
     ]
-
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         writer.writeheader()
-        seen_keys: set[tuple[Any, ...]] = set()
-        exported_rows = 0
         for row in rows:
-            code_value = str(row["code"]).strip() if row["code"] is not None else ""
-            canonical_code = canonical_event_code(code_value)
-            if canonical_code:
-                dedupe_key: tuple[Any, ...] = ("code", canonical_code)
-            else:
-                dedupe_key = (
-                    "fallback",
-                    row["event_ts_utc"],
-                    row["lat"],
-                    row["lon"],
-                    row["magnitud"],
-                    row["prof"],
-                )
-            if dedupe_key in seen_keys:
-                continue
-            seen_keys.add(dedupe_key)
+            writer.writerow(row)
+    return len(rows)
 
-            event_ts_et, event_date_et, event_time_et = iso_utc_to_zone_fields(
-                row["event_ts_utc"], ET_TZ
-            )
-            writer.writerow(
-                {
-                    "objectid": row["objectid"],
-                    "code": canonical_code if canonical_code else row["code"],
-                    "event_ts_et": event_ts_et,
-                    "event_date_et": event_date_et,
-                    "event_time_et": event_time_et,
-                    "event_ts_utc": row["event_ts_utc"],
-                    "lat": row["lat"],
-                    "lon": row["lon"],
-                    "magnitud": row["magnitud"],
-                    "prof": row["prof"],
-                    "profundidad": row["profundidad"],
-                    "intensidad": row["intensidad"],
-                    "departamento": row["departamento"],
-                    "referencia": row["referencia"],
-                    "ultimo": row["ultimo"],
-                    "reporte": row["reporte"],
-                    "ingested_at_utc": row["ingested_at_utc"],
-                }
-            )
-            exported_rows += 1
-    return exported_rows
+
+def export_curated_csv(
+    conn: sqlite3.Connection,
+    csv_path: Path,
+    limit_rows: int | None = None,
+) -> int:
+    curated_rows = build_curated_export_rows(conn, limit_rows=limit_rows)
+    return write_curated_csv(curated_rows, csv_path)
+
+
+def export_dashboard_metadata(
+    rows: list[dict[str, Any]],
+    meta_path: Path,
+) -> None:
+    event_dates = sorted({str(row["event_date_et"]) for row in rows if row.get("event_date_et")})
+    generated_at_utc = utc_now_iso()
+    generated_at_et, _, _ = iso_utc_to_zone_fields(generated_at_utc, ET_TZ)
+    latest_event = rows[0] if rows else None
+    max_magnitude = max(
+        (to_float(row.get("magnitud")) for row in rows if to_float(row.get("magnitud")) is not None),
+        default=None,
+    )
+    departments = sorted(
+        {
+            str(row.get("departamento")).strip()
+            for row in rows
+            if row.get("departamento") is not None and str(row.get("departamento")).strip()
+        }
+    )
+    payload = {
+        "generated_at_utc": generated_at_utc,
+        "generated_at_et": generated_at_et,
+        "row_count": len(rows),
+        "min_event_date_et": event_dates[0] if event_dates else None,
+        "max_event_date_et": event_dates[-1] if event_dates else None,
+        "latest_event": latest_event,
+        "max_magnitude": max_magnitude,
+        "department_count": len(departments),
+        "departments": departments,
+    }
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(
+        json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
 
 
 def export_geojson(conn: sqlite3.Connection, geojson_path: Path) -> None:
@@ -2196,8 +2247,13 @@ def run_once(
         curated_csv_path = output_dir / "earthquakes_live_curated.csv"
         preview_csv_path = output_dir / "earthquakes_live_preview.csv"
         geojson_path = output_dir / "earthquakes_live.geojson"
+        site_csv_path = Path("docs/data/earthquakes_live_curated.csv")
+        site_meta_path = Path("docs/data/dashboard_meta.json")
         export_csv(conn, csv_path)
-        export_curated_csv(conn, curated_csv_path)
+        curated_rows = build_curated_export_rows(conn)
+        write_curated_csv(curated_rows, curated_csv_path)
+        write_curated_csv(curated_rows, site_csv_path)
+        export_dashboard_metadata(curated_rows, site_meta_path)
         export_curated_csv(conn, preview_csv_path, limit_rows=preview_rows)
         export_geojson(conn, geojson_path)
 
@@ -2214,6 +2270,8 @@ def run_once(
             curated_csv_path=curated_csv_path,
             preview_csv_path=preview_csv_path,
             geojson_path=geojson_path,
+            site_csv_path=site_csv_path,
+            site_meta_path=site_meta_path,
         )
     finally:
         conn.close()
@@ -2476,6 +2534,8 @@ def main() -> int:
                         "curated_csv": str(summary.curated_csv_path),
                         "preview_csv": str(summary.preview_csv_path),
                         "geojson": str(summary.geojson_path),
+                        "site_csv": str(summary.site_csv_path),
+                        "site_meta": str(summary.site_meta_path),
                         "run_at_utc": now_utc,
                         "run_at_et": now_et,
                         "historical_source": args.historical_source,
