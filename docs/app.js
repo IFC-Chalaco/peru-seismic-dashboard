@@ -541,7 +541,7 @@ function renderScatterPlot(rows) {
     ? `${formatNumber(sampledRows.length)} sampled points colored by magnitude band and RAG category`
     : "No depth values are available in the current filtered slice";
   elements["depth-heatmap-note"].textContent = heatmap.topCell
-    ? `Largest cluster: ${heatmap.topCell.magnitudeLabel} magnitude events at ${heatmap.topCell.depthLabel} depth`
+    ? `Cells show % within each depth band. Strongest concentration: ${heatmap.topCell.magnitudeLabel} at ${heatmap.topCell.depthLabel} (${(heatmap.topCell.rowShare * 100).toFixed(1)}%)`
     : "No depth-band pattern data is available";
 }
 
@@ -844,15 +844,27 @@ function buildDepthMagnitudeHeatmap(rows) {
     cells[depthIndex][magnitudeIndex].count += 1;
   });
 
+  const totalCount = rows.length;
+  cells.forEach((row) => {
+    const rowTotal = row.reduce((sum, cell) => sum + cell.count, 0);
+    row.forEach((cell) => {
+      cell.rowTotal = rowTotal;
+      cell.rowShare = rowTotal ? cell.count / rowTotal : 0;
+      cell.totalShare = totalCount ? cell.count / totalCount : 0;
+      cell.isRiskBand = ["Moderate", "Strong", "Major", "Big", "Extreme"].includes(cell.magnitudeLabel);
+    });
+  });
+
   const flat = cells.flat();
-  const maxCount = Math.max(...flat.map((cell) => cell.count), 0);
-  const topCell = flat.filter((cell) => cell.count > 0).sort((left, right) => right.count - left.count)[0] || null;
+  const maxRowShare = Math.max(...flat.map((cell) => cell.rowShare), 0);
+  const topCell = flat.filter((cell) => cell.count > 0).sort((left, right) => right.rowShare - left.rowShare || right.count - left.count)[0] || null;
 
   return {
     depthBins,
     magnitudeBins,
     cells,
-    maxCount,
+    totalCount,
+    maxRowShare,
     topCell,
   };
 }
@@ -1075,7 +1087,7 @@ function drawScatterPlot(svg, rows, options) {
 
 function drawDepthHeatmap(svg, heatmap) {
   clearSvg(svg);
-  if (!heatmap.maxCount) {
+  if (!heatmap.totalCount) {
     svg.appendChild(emptyText(svg, "No depth-band pattern data available."));
     return;
   }
@@ -1114,7 +1126,7 @@ function drawDepthHeatmap(svg, heatmap) {
     row.forEach((cell, colIndex) => {
       const x = pad.left + colIndex * colWidth;
       const y = pad.top + rowIndex * rowHeight;
-      const opacity = cell.count > 0 ? 0.12 + (cell.count / heatmap.maxCount) * 0.88 : 0.06;
+      const opacity = cell.count > 0 ? 0.1 + (cell.rowShare / heatmap.maxRowShare) * 0.9 : 0.05;
       const rect = svgNode("rect", {
         x: x + 1,
         y: y + 1,
@@ -1123,15 +1135,15 @@ function drawDepthHeatmap(svg, heatmap) {
         rx: 8,
         fill: cell.magnitudeColor,
         "fill-opacity": opacity.toFixed(3),
-        stroke: "rgba(22, 40, 48, 0.08)",
-        "stroke-width": 1,
+        stroke: cell.isRiskBand ? "rgba(122, 24, 24, 0.36)" : "rgba(22, 40, 48, 0.08)",
+        "stroke-width": cell.isRiskBand ? 1.5 : 1,
       });
       attachTooltip(rect, (event) => {
         showTooltip(
           event,
           tooltipMarkup(
             `${escapeHtml(cell.magnitudeLabel)} · ${escapeHtml(cell.depthLabel)}`,
-            `${formatNumber(cell.count)} earthquakes in this depth-magnitude cell`
+            `${formatNumber(cell.count)} earthquakes<br />${(cell.rowShare * 100).toFixed(1)}% of this depth band<br />${(cell.totalShare * 100).toFixed(1)}% of filtered events`
           )
         );
       });
@@ -1142,7 +1154,7 @@ function drawDepthHeatmap(svg, heatmap) {
         y: y + rowHeight / 2 + 4,
         class: "axis-text",
         "text-anchor": "middle",
-      }, cell.count > 0 ? formatNumber(cell.count) : ""));
+      }, cell.count > 0 ? `${Math.round(cell.rowShare * 100)}%` : ""));
     });
   });
 
