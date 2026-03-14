@@ -1094,7 +1094,7 @@ function drawDepthHeatmap(svg, heatmap) {
 
   const width = 700;
   const height = 320;
-  const pad = { top: 20, right: 18, bottom: 78, left: 96 };
+  const pad = { top: 20, right: 18, bottom: 96, left: 96 };
   const innerWidth = width - pad.left - pad.right;
   const innerHeight = height - pad.top - pad.bottom;
   const colWidth = innerWidth / heatmap.magnitudeBins.length;
@@ -1112,13 +1112,19 @@ function drawDepthHeatmap(svg, heatmap) {
 
   heatmap.magnitudeBins.forEach((magnitudeBin, colIndex) => {
     const x = pad.left + colIndex * colWidth + colWidth / 2;
+    const lines = splitAxisLabel(magnitudeBin.label);
     const label = svgNode("text", {
       x,
-      y: height - 18,
-      class: "axis-text",
-      "text-anchor": "end",
-      transform: `rotate(-32 ${x} ${height - 18})`,
-    }, magnitudeBin.label);
+      y: pad.top + innerHeight + 24 - (lines.length > 1 ? 6 : 0),
+      class: "axis-text heatmap-axis-label",
+      "text-anchor": "middle",
+    });
+    lines.forEach((line, lineIndex) => {
+      label.appendChild(svgNode("tspan", {
+        x,
+        dy: lineIndex === 0 ? 0 : 12,
+      }, line));
+    });
     svg.appendChild(label);
   });
 
@@ -1160,7 +1166,7 @@ function drawDepthHeatmap(svg, heatmap) {
 
   svg.appendChild(svgNode("text", {
     x: width / 2,
-    y: height - 2,
+    y: height - 8,
     class: "axis-title",
     "text-anchor": "middle",
   }, "Magnitude band"));
@@ -1531,6 +1537,14 @@ function splitBubbleLabel(label) {
     return parts;
   }
   return [parts.slice(0, Math.ceil(parts.length / 2)).join(" "), parts.slice(Math.ceil(parts.length / 2)).join(" ")];
+}
+
+function splitAxisLabel(label) {
+  const parts = String(label || "").split(" ");
+  if (parts.length <= 1) {
+    return [String(label || "")];
+  }
+  return [parts.slice(0, -1).join(" "), parts[parts.length - 1]];
 }
 
 function buildTickIndices(length, maxTicks) {

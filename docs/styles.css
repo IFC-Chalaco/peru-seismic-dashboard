@@ -545,6 +545,10 @@ tbody tr:hover {
   font-size: 12px;
 }
 
+.heatmap-axis-label {
+  font-size: 11px;
+}
+
 .axis-title {
   fill: var(--muted);
   font-family: "Space Grotesk", sans-serif;
