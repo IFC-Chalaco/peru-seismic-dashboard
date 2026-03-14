@@ -82,7 +82,7 @@ The GitHub Pages site is published from the `/docs` folder.
 - Summary cards
   - Surface current-year and current-day KPI metrics in Eastern Time
 - Filter panel
-  - Controls date range, department, and minimum magnitude
+  - Controls date range, department, and minimum magnitude, including quick ranges (`Last 7D`, `Last 30D`, `Last 90D`, `YTD`, `All history`)
 - Magnitude bands
   - Groups earthquakes into human-readable severity buckets
 - Daily time series
@@ -93,10 +93,10 @@ The GitHub Pages site is published from the `/docs` folder.
   - Show longer historical cadence and changes over time
 - Magnitude vs depth scatterplot
   - Shows how stronger events distribute across depth
-- Magnitude vs event date scatterplot
-  - Shows temporal clustering of magnitude over the selected period
+- Depth-band pattern heatmap
+  - Shows the percentage mix of magnitude bands within each depth band to highlight structural clustering
 - Most affected departamentos bubble chart
-  - Shows the current concentration of events by region in a visually scan-friendly layout
+  - Shows the current concentration of events by region in a visually scan-friendly layout and respects the active filter window
 - Epicenter map
   - Displays filtered event locations spatially
 - Recent events table
@@ -109,7 +109,8 @@ The dashboard is fully client-side:
 - loads the curated CSV and metadata JSON directly from GitHub Pages
 - applies filters in-browser
 - redraws charts without server-side rendering
-- supports hover detail for time series, scatterplots, and bubbles
+- keeps the bubble chart, map, and recent-events table aligned with the active filter state
+- supports hover detail for time series, scatterplots, heatmap cells, bubbles, and map markers
 
 ---
 
@@ -349,16 +350,24 @@ Secciones principales del sitio:
 
 - Hero y tarjetas de estado
 - KPIs del anio actual y del dia actual
-- Panel de filtros
+- Panel de filtros con rangos rapidos (`Last 7D`, `Last 30D`, `Last 90D`, `YTD`, `All history`)
 - Bandas de magnitud
 - Serie diaria de ocurrencias
 - Promedio movil de 7 dias
 - Series mensuales y anuales
 - Scatterplot magnitud vs profundidad
-- Scatterplot magnitud vs fecha del evento
+- Heatmap de patron por banda de profundidad
 - Bubble chart de departamentos mas afectados
 - Mapa de epicentros
 - Tabla de eventos recientes
+
+Modelo de interaccion:
+
+- el dashboard carga CSV y metadata directamente desde GitHub Pages
+- aplica filtros en el navegador
+- redibuja los graficos sin renderizado en servidor
+- mantiene alineados bubble chart, mapa y tabla con el filtro activo
+- incluye hover details en series de tiempo, scatterplots, celdas del heatmap, bubbles y mapa
 
 ---
 
