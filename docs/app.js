@@ -4,6 +4,9 @@ const PERU_VIEW = {
   center: [-9.19, -75.02],
   zoom: 5,
 };
+const LIVE_MONITOR_INTERVAL_MS = 60 * 1000;
+const TOAST_DISMISS_MS = 9000;
+const SOUND_STORAGE_KEY = "igp-seismic-sound-enabled";
 const MAP_LIMIT = 2500;
 const SCATTER_LIMIT = 1800;
 const TABLE_LIMIT = 12;
@@ -43,6 +46,12 @@ const state = {
   renderer: null,
   activeRange: "ytd",
   tooltip: null,
+  departmentGrid: new Map(),
+  latestEventKey: "",
+  liveMonitorTimer: null,
+  liveCheckInFlight: false,
+  soundEnabled: false,
+  audioContext: null,
 };
 
 const elements = {};
@@ -102,6 +111,8 @@ function cacheElements() {
     "recent-events-body",
     "error-banner",
     "chart-tooltip",
+    "sound-toggle",
+    "toast-host",
   ];
 
   ids.forEach((id) => {
@@ -160,33 +171,76 @@ function bindEvents() {
   });
 
   elements["download-filtered"].addEventListener("click", downloadFilteredCsv);
+  elements["sound-toggle"].addEventListener("click", toggleSoundAlerts);
 }
 
 async function loadDashboard() {
   const [rows, meta] = await Promise.all([loadCsvRows(), loadMeta()]);
-  state.allRows = enrichMissingDepartments(rows);
-  state.meta = meta;
+  state.soundEnabled = loadSoundPreference();
+  syncSoundToggle();
+  ingestPublishedData(rows, meta, { preserveFilters: false });
 
   if (!state.allRows.length) {
     showError("The published website data file is empty.");
     return;
   }
-
-  hydrateMeta();
-  populateFilterOptions();
-  syncQuickRangeButtons();
-  applyQuickRange();
-  applyFilters();
+  state.latestEventKey = currentLatestEventKey();
+  startLiveMonitor();
 }
 
-function loadCsvRows() {
+function startLiveMonitor() {
+  if (state.liveMonitorTimer) {
+    window.clearInterval(state.liveMonitorTimer);
+  }
+  state.liveMonitorTimer = window.setInterval(checkForLiveUpdates, LIVE_MONITOR_INTERVAL_MS);
+}
+
+async function checkForLiveUpdates() {
+  if (state.liveCheckInFlight) {
+    return;
+  }
+
+  state.liveCheckInFlight = true;
+
+  try {
+    const latestKnownKey = state.latestEventKey || currentLatestEventKey();
+    const latestMeta = await loadMeta();
+    if (!latestMeta) {
+      return;
+    }
+
+    if (latestMeta.generated_at_et !== state.meta?.generated_at_et || latestMeta.row_count !== state.meta?.row_count) {
+      state.meta = latestMeta;
+      hydrateMeta();
+    }
+
+    const latestRow = normalizeLatestEvent(latestMeta.latest_event);
+    const nextKey = eventIdentity(latestRow);
+    if (!nextKey || nextKey === latestKnownKey) {
+      state.latestEventKey = nextKey || latestKnownKey;
+      return;
+    }
+
+    const freshRows = await loadCsvRows(latestMeta.generated_at_utc || Date.now());
+    ingestPublishedData(freshRows, latestMeta, { preserveFilters: true });
+    showLiveToast(latestRow);
+    playAlertTone(latestRow);
+    state.latestEventKey = nextKey;
+  } catch (error) {
+    console.warn("Live monitor check failed", error);
+  } finally {
+    state.liveCheckInFlight = false;
+  }
+}
+
+function loadCsvRows(cacheStamp = null) {
   return new Promise((resolve, reject) => {
     if (typeof Papa === "undefined") {
       reject(new Error("PapaParse was not loaded."));
       return;
     }
 
-    Papa.parse(withCacheBust(DATA_URL), {
+    Papa.parse(withCacheBust(DATA_URL, cacheStamp), {
       download: true,
       header: true,
       skipEmptyLines: true,
@@ -207,9 +261,9 @@ function loadCsvRows() {
   });
 }
 
-async function loadMeta() {
+async function loadMeta(cacheStamp = null) {
   try {
-    const response = await fetch(withCacheBust(META_URL), { cache: "no-store" });
+    const response = await fetch(withCacheBust(META_URL, cacheStamp), { cache: "no-store" });
     if (!response.ok) {
       return null;
     }
@@ -218,6 +272,37 @@ async function loadMeta() {
     console.warn("Metadata file unavailable", error);
     return null;
   }
+}
+
+function ingestPublishedData(rows, meta, options = {}) {
+  const preserveFilters = Boolean(options.preserveFilters);
+  const previousFilters = preserveFilters
+    ? {
+        startDate: elements["start-date"].value,
+        endDate: elements["end-date"].value,
+        department: elements["department-select"].value,
+      }
+    : null;
+
+  const enrichedRows = enrichMissingDepartments(rows);
+  state.departmentGrid = buildDepartmentGrid(enrichedRows);
+  state.allRows = enrichedRows;
+  state.meta = meta || state.meta;
+
+  hydrateMeta();
+  populateFilterOptions(previousFilters?.department || "");
+  syncQuickRangeButtons();
+
+  if (state.activeRange) {
+    applyQuickRange();
+  } else if (preserveFilters && previousFilters) {
+    elements["start-date"].value = clampIsoDate(previousFilters.startDate || elements["start-date"].min, elements["start-date"].min, elements["start-date"].max);
+    elements["end-date"].value = clampIsoDate(previousFilters.endDate || elements["end-date"].max, elements["end-date"].min, elements["end-date"].max);
+  } else {
+    applyQuickRange();
+  }
+
+  applyFilters();
 }
 
 function parseRow(raw) {
@@ -284,7 +369,7 @@ function hydrateMeta() {
   elements["end-date"].max = maxDate;
 }
 
-function populateFilterOptions() {
+function populateFilterOptions(selectedDepartment = "") {
   const departments =
     state.meta?.departments?.map(canonicalDepartment).map(formatDepartmentLabel).filter(Boolean) ||
     Array.from(new Set(state.allRows.map((row) => row.departamento).filter(Boolean)));
@@ -299,6 +384,8 @@ function populateFilterOptions() {
     option.textContent = department;
     select.appendChild(option);
   });
+
+  select.value = unique.includes(selectedDepartment) ? selectedDepartment : "";
 }
 
 function applyQuickRange() {
@@ -656,6 +743,46 @@ function renderRecentEvents() {
 function updateFilterSummary(startDate, endDate, department) {
   const scope = department ? `Department: ${department}` : "All departments";
   elements["filter-summary"].textContent = `${formatTemporalLabel(startDate)} to ${formatTemporalLabel(endDate)} · ${scope}`;
+}
+
+function loadSoundPreference() {
+  try {
+    return window.localStorage.getItem(SOUND_STORAGE_KEY) === "true";
+  } catch (error) {
+    console.warn("Could not load sound preference", error);
+    return false;
+  }
+}
+
+function persistSoundPreference() {
+  try {
+    window.localStorage.setItem(SOUND_STORAGE_KEY, String(state.soundEnabled));
+  } catch (error) {
+    console.warn("Could not persist sound preference", error);
+  }
+}
+
+function syncSoundToggle() {
+  const button = elements["sound-toggle"];
+  if (!button) {
+    return;
+  }
+  button.setAttribute("aria-pressed", String(state.soundEnabled));
+  button.textContent = state.soundEnabled ? "Alert sound on" : "Alert sound off";
+}
+
+function toggleSoundAlerts() {
+  state.soundEnabled = !state.soundEnabled;
+  persistSoundPreference();
+  syncSoundToggle();
+
+  if (state.soundEnabled) {
+    ensureAudioContext();
+    playAlertTone({
+      ragRating: "Green",
+      bandColor: "#55b97f",
+    }, { preview: true });
+  }
 }
 
 function syncQuickRangeButtons() {
@@ -1278,6 +1405,144 @@ function layoutBubbles(items, width, height) {
   return placed;
 }
 
+function currentLatestEventKey() {
+  const latestRow = state.allRows[0] || normalizeLatestEvent(state.meta?.latest_event);
+  return eventIdentity(latestRow);
+}
+
+function normalizeLatestEvent(raw) {
+  if (!raw) {
+    return null;
+  }
+  const parsed = parseRow(raw);
+  if (!parsed) {
+    return null;
+  }
+  const [enriched] = enrichMissingDepartments([parsed], state.departmentGrid);
+  return enriched || parsed;
+}
+
+function eventIdentity(row) {
+  if (!row) {
+    return "";
+  }
+  const parts = [
+    Number.isFinite(row.objectid) ? row.objectid : "",
+    row.code || "",
+    row.event_ts_utc || row.event_ts_et || "",
+  ];
+  return parts.filter(Boolean).join("|");
+}
+
+function showLiveToast(row) {
+  if (!row || !elements["toast-host"]) {
+    return;
+  }
+
+  const host = elements["toast-host"];
+  const toast = document.createElement("article");
+  const ragClass = toastRagClass(row.ragRating);
+  const magnitudeText = Number.isFinite(row.magnitud) ? `M ${row.magnitud.toFixed(1)}` : "Magnitude pending";
+  const departmentText = row.departamento || inferDepartmentFromReference(row.referencia) || "Location pending";
+  const timestampText = row.event_date_et
+    ? `${formatTemporalLabel(row.event_date_et)}${row.event_time_et ? ` · ${row.event_time_et} ET` : ""}`
+    : "Eastern Time pending";
+  const depthText = Number.isFinite(row.prof)
+    ? `Depth ${row.prof} km${row.profundidad ? ` · ${row.profundidad}` : ""}`
+    : row.profundidad || "Depth pending";
+  const referenceText = row.referencia || "Reference text unavailable from the source feed.";
+  const soundText = state.soundEnabled ? "Sound is on for future live events." : "Sound is off. Use the toggle to enable an alert tone.";
+
+  toast.className = `live-toast ${ragClass}`;
+  toast.style.setProperty("--toast-accent", row.bandColor || "#6f8391");
+  toast.innerHTML = `
+    <button class="toast-close" type="button" aria-label="Dismiss live event alert">×</button>
+    <div class="toast-head">
+      <div>
+        <p class="toast-kicker">New earthquake detected</p>
+        <p class="toast-title">${escapeHtml(row.code || "Latest event")} · ${escapeHtml(row.magnitudeBand || "Unknown band")}</p>
+      </div>
+      <span class="toast-rag">${escapeHtml(row.ragRating || "Unknown")}</span>
+    </div>
+    <div class="toast-meta">
+      <p class="toast-primary">${escapeHtml(magnitudeText)} · ${escapeHtml(departmentText)}</p>
+      <p class="toast-secondary">${escapeHtml(timestampText)} · ${escapeHtml(depthText)}</p>
+      <p class="toast-reference">${escapeHtml(referenceText)}</p>
+      <div class="toast-sound">${escapeHtml(soundText)}</div>
+    </div>
+  `;
+
+  const dismiss = () => dismissToast(toast);
+  toast.querySelector(".toast-close")?.addEventListener("click", dismiss);
+  host.prepend(toast);
+  window.setTimeout(dismiss, TOAST_DISMISS_MS);
+}
+
+function dismissToast(toast) {
+  if (!toast || toast.classList.contains("is-hiding")) {
+    return;
+  }
+  toast.classList.add("is-hiding");
+  window.setTimeout(() => toast.remove(), 180);
+}
+
+function toastRagClass(ragRating) {
+  const normalized = String(ragRating || "unknown").toLowerCase();
+  if (normalized === "green" || normalized === "amber" || normalized === "red") {
+    return `toast-${normalized}`;
+  }
+  return "toast-unknown";
+}
+
+function ensureAudioContext() {
+  if (state.audioContext) {
+    return state.audioContext;
+  }
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextCtor) {
+    return null;
+  }
+  state.audioContext = new AudioContextCtor();
+  return state.audioContext;
+}
+
+function playAlertTone(row, options = {}) {
+  if (!state.soundEnabled && !options.preview) {
+    return;
+  }
+  const audioContext = ensureAudioContext();
+  if (!audioContext) {
+    return;
+  }
+
+  const rag = String(row?.ragRating || "green").toLowerCase();
+  const sequence = rag === "red"
+    ? [880, 740, 880]
+    : rag === "amber"
+      ? [760, 920]
+      : [660];
+
+  if (audioContext.state === "suspended") {
+    audioContext.resume().catch(() => {});
+  }
+
+  let startTime = audioContext.currentTime + 0.02;
+  sequence.forEach((frequency, index) => {
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    oscillator.type = rag === "red" ? "sawtooth" : "sine";
+    oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.exponentialRampToValueAtTime(index === 0 ? 0.055 : 0.045, startTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.18);
+    oscillator.connect(gain);
+    gain.connect(audioContext.destination);
+    oscillator.start(startTime);
+    oscillator.stop(startTime + 0.2);
+    startTime += rag === "red" ? 0.14 : 0.17;
+  });
+}
+
 function currentEtDate() {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
@@ -1320,8 +1585,8 @@ function sampleRows(rows, limit) {
   return output;
 }
 
-function enrichMissingDepartments(rows) {
-  const grid = buildDepartmentGrid(rows);
+function enrichMissingDepartments(rows, existingGrid = null) {
+  const grid = existingGrid || buildDepartmentGrid(rows);
   return rows.map((row) => {
     if (row.departamento_key) {
       return row;
@@ -1518,6 +1783,19 @@ function shiftIsoDate(isoDate, deltaDays) {
   return dt.toISOString().slice(0, 10);
 }
 
+function clampIsoDate(value, minDate, maxDate) {
+  if (!value) {
+    return minDate || maxDate || "";
+  }
+  if (minDate && value < minDate) {
+    return minDate;
+  }
+  if (maxDate && value > maxDate) {
+    return maxDate;
+  }
+  return value;
+}
+
 function shiftMonth(isoDate, deltaMonths) {
   const [year, month] = isoDate.slice(0, 7).split("-").map(Number);
   const dt = new Date(Date.UTC(year, month - 1, 1));
@@ -1574,8 +1852,8 @@ function formatNumber(value) {
   return new Intl.NumberFormat("en-US").format(value || 0);
 }
 
-function withCacheBust(url) {
-  const stamp = state.meta?.generated_at_utc || Date.now();
+function withCacheBust(url, cacheStamp = null) {
+  const stamp = cacheStamp || state.meta?.generated_at_utc || Date.now();
   return `${url}?v=${encodeURIComponent(stamp)}`;
 }
 

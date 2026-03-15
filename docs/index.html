@@ -25,7 +25,9 @@
         <p class="hero-credit">Created by: Carlos Guanilo</p>
         <div class="hero-actions">
           <a class="btn btn-primary" href="https://github.com/IFC-Chalaco/peru-seismic-dashboard" target="_blank" rel="noreferrer">Open repository</a>
+          <button id="sound-toggle" class="btn btn-secondary sound-toggle" type="button" aria-pressed="false">Alert sound off</button>
         </div>
+        <p class="hero-monitor-note">Live event toasts appear while this tab stays open and watching the feed.</p>
       </div>
 
       <div class="hero-status">
@@ -274,11 +276,12 @@
 
     <section class="panel footer-panel">
       <p>
-        Daily occurrence charts use the active ET date range. Month and year trends use the broader department and minimum magnitude scope so they still show historical shape even when the visible date range is narrow.
+        Daily occurrence charts use the active ET date range. Month and year trends use the broader department scope so they still show historical shape even when the visible date range is narrow.
       </p>
       <p id="error-banner" class="error-banner" hidden></p>
     </section>
   </main>
+  <div id="toast-host" class="toast-host" aria-live="polite" aria-atomic="false"></div>
   <div id="chart-tooltip" class="chart-tooltip" hidden></div>
 </body>
 </html>
