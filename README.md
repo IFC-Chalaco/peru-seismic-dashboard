@@ -69,7 +69,7 @@ The GitHub Pages site is published from the `/docs` folder.
 - `docs/app.js`
   - Client-side data loading, filtering, calculations, chart rendering, map rendering, and hover interactions
 - `docs/styles.css`
-  - Visual styling, layout system, responsiveness, and chart presentation
+  - Liquid-glass visual styling, layout system, responsiveness, and chart presentation
 - `docs/data/earthquakes_live_curated.csv`
   - Curated dataset consumed by the website
 - `docs/data/dashboard_meta.json`
@@ -77,12 +77,12 @@ The GitHub Pages site is published from the `/docs` folder.
 
 ### Purpose of the dashboard sections
 
-- Hero and status cards
+- Hero and status annotations
   - Explain the project, display sync status, and show current published coverage
 - Summary cards
   - Surface current-year and current-day KPI metrics in Eastern Time
 - Filter panel
-  - Controls date range, department, and minimum magnitude, including quick ranges (`Last 7D`, `Last 30D`, `Last 90D`, `YTD`, `All history`)
+  - Controls date range and department, including quick ranges (`Last 7D`, `Last 30D`, `Last 90D`, `YTD`, `All history`)
 - Magnitude bands
   - Groups earthquakes into human-readable severity buckets
 - Daily time series
@@ -264,6 +264,7 @@ The curated feed excludes:
 - heartbeat monitoring for stale feed detection
 - automatic GitHub issue creation for stale pipeline alerts
 - idempotent historical ingestion behavior
+- serialized refresh runs to avoid overlapping workflow push conflicts
 - compatibility with ephemeral CI runners
 
 ---
@@ -276,6 +277,8 @@ The curated feed excludes:
 - only derived public datasets are committed
 - schema-aware ingestion and export validation
 - raw source payloads preserved for traceability where needed
+- `SECURITY.md` documents the repository's security posture and vulnerability reporting guidance
+- `.github/dependabot.yml` tracks GitHub Actions dependency updates automatically
 
 ---
 
@@ -342,15 +345,15 @@ Archivos principales:
 
 - `docs/index.html`: estructura de la pagina y layout del dashboard
 - `docs/app.js`: carga de datos, filtros, calculos, graficos, mapa e interacciones
-- `docs/styles.css`: estilo visual, layout responsivo y presentacion
+- `docs/styles.css`: estilo visual tipo liquid-glass, layout responsivo y presentacion
 - `docs/data/earthquakes_live_curated.csv`: dataset curado consumido por el sitio
 - `docs/data/dashboard_meta.json`: metadata ligera para conteos, cobertura y sincronizacion
 
 Secciones principales del sitio:
 
-- Hero y tarjetas de estado
+- Hero y anotaciones de estado
 - KPIs del anio actual y del dia actual
-- Panel de filtros con rangos rapidos (`Last 7D`, `Last 30D`, `Last 90D`, `YTD`, `All history`)
+- Panel de filtros con rangos rapidos (`Last 7D`, `Last 30D`, `Last 90D`, `YTD`, `All history`) y selector de departamento
 - Bandas de magnitud
 - Serie diaria de ocurrencias
 - Promedio movil de 7 dias
@@ -399,3 +402,5 @@ El sistema:
 - no almacena datos personales
 - solo publica datos derivados de fuentes oficiales publicas
 - compatible con ejecucion CI/CD en entornos efimeros
+- `SECURITY.md` documenta la postura de seguridad y el canal recomendado para reportar vulnerabilidades
+- `.github/dependabot.yml` monitorea automaticamente actualizaciones de dependencias de GitHub Actions
