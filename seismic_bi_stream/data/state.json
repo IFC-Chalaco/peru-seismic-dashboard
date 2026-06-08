@@ -1,6 +1,6 @@
 {
-  "historical_last_error": "HTTP Error 403: Forbidden",
-  "historical_last_error_utc": "2026-06-07T16:22:05Z",
+  "historical_last_error": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: certificate has expired (_ssl.c:1010)>",
+  "historical_last_error_utc": "2026-06-08T18:36:10Z",
   "historical_last_refresh_et": "2026-05-07T10:39:50-04:00",
   "historical_last_refresh_utc": "2026-05-07T14:39:50Z",
   "historical_source": "https://www.datosabiertos.gob.pe/sites/default/files/Catalogo1960_2023.xlsx",
@@ -25,12 +25,12 @@
     "shape": "esriFieldTypeGeometry",
     "ultimo": "esriFieldTypeString"
   },
-  "last_objectid": 1998,
-  "last_run_et": "2026-06-07T12:22:13-04:00",
-  "last_run_utc": "2026-06-07T16:22:13Z",
+  "last_objectid": 2000,
+  "last_run_et": "2026-06-08T14:36:23-04:00",
+  "last_run_utc": "2026-06-08T18:36:23Z",
   "reportes_base_url": "https://ultimosismo.igp.gob.pe/api/ultimo-sismo/ajaxb",
   "reportes_end_year": 2026,
-  "reportes_last_refresh_et": "2026-06-07T12:22:11-04:00",
-  "reportes_last_refresh_utc": "2026-06-07T16:22:11Z",
+  "reportes_last_refresh_et": "2026-06-08T14:36:21-04:00",
+  "reportes_last_refresh_utc": "2026-06-08T18:36:21Z",
   "reportes_start_year": 2020
 }
