@@ -2,10 +2,12 @@ name: IGP Seismic Feed Stale Alert
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    # Offset the watchdog from the refresh workflow and busy hour boundaries.
+    - cron: "13,43 * * * *"
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: read
   issues: write
 
@@ -14,9 +16,13 @@ jobs:
     runs-on: ubuntu-latest
     env:
       STATE_PATH: seismic_bi_stream/data/state.json
-      STALE_MINUTES: "30"
+      # GitHub scheduled workflows can be delayed or dropped during high load.
+      # Two hours catches a real outage without alerting on an isolated delay.
+      STALE_MINUTES: "120"
+      RECOVERY_MINUTES: "30"
       ALERT_TITLE: "[Alert] IGP seismic feed heartbeat stale"
       ALERT_LABEL: "seismic-monitoring"
+      REFRESH_WORKFLOW: "igp-seismic-refresh.yml"
 
     steps:
       - name: Checkout
@@ -30,8 +36,10 @@ jobs:
 
             const path = process.env.STATE_PATH;
             const staleMinutes = Number.parseInt(process.env.STALE_MINUTES || "30", 10);
+            const recoveryMinutes = Number.parseInt(process.env.RECOVERY_MINUTES || "30", 10);
             const alertTitle = process.env.ALERT_TITLE;
             const alertLabel = process.env.ALERT_LABEL;
+            const refreshWorkflow = process.env.REFRESH_WORKFLOW;
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const fmtEt = (date) =>
@@ -99,6 +107,26 @@ jobs:
 
             const existingAlert = openIssues.find((issue) => issue.title === alertTitle);
 
+            let recoveryDispatch = "not needed";
+            if (ageMinutes > recoveryMinutes) {
+              try {
+                await github.rest.actions.createWorkflowDispatch({
+                  owner,
+                  repo,
+                  workflow_id: refreshWorkflow,
+                  ref: context.payload.repository.default_branch
+                });
+                recoveryDispatch = "requested";
+                core.warning(
+                  `Stale heartbeat detected; dispatched ${refreshWorkflow} on ` +
+                  `${context.payload.repository.default_branch}.`
+                );
+              } catch (error) {
+                recoveryDispatch = `failed: ${error.message}`;
+                core.error(`Failed to dispatch recovery refresh: ${error.message}`);
+              }
+            }
+
             if (ageMinutes > staleMinutes) {
               const body = [
                 "Automated monitor detected stale seismic feed heartbeat.",
@@ -109,6 +137,8 @@ jobs:
                 `- last_run_et: ${lastRunEt}`,
                 `- checked_at_utc: ${now.toISOString()}`,
                 `- checked_at_et: ${checkedEt}`,
+                `- recovery_dispatch: ${recoveryDispatch}`,
+                `- watchdog_run: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
                 "",
                 "Investigate workflow: `Refresh IGP Seismic Feed`."
               ].join("\n");
@@ -123,6 +153,20 @@ jobs:
                 });
                 core.notice("Stale heartbeat detected. Created alert issue.");
               } else {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: existingAlert.number,
+                  body: [
+                    "Heartbeat remains stale; watchdog requested another recovery refresh.",
+                    "",
+                    `- Current age: ${ageMinutes.toFixed(1)} minutes`,
+                    `- last_run_utc: ${lastRunUtc}`,
+                    `- checked_at_utc: ${now.toISOString()}`,
+                    `- recovery_dispatch: ${recoveryDispatch}`,
+                    `- watchdog_run: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`
+                  ].join("\n")
+                });
                 core.notice("Stale heartbeat detected. Alert issue already open.");
               }
             } else if (existingAlert) {
@@ -147,6 +191,11 @@ jobs:
                 state: "closed"
               });
               core.notice("Heartbeat healthy. Closed existing alert issue.");
+            } else if (ageMinutes > recoveryMinutes) {
+              core.warning(
+                `Heartbeat age ${ageMinutes.toFixed(1)} minutes exceeded the ` +
+                `${recoveryMinutes}-minute recovery threshold; refresh dispatched without opening an alert.`
+              );
             } else {
               core.notice("Heartbeat healthy. No alert issue needed.");
             }
@@ -158,5 +207,8 @@ jobs:
               .addRaw(`checked_at_utc: ${now.toISOString()}\n`, true)
               .addRaw(`checked_at_et: ${checkedEt}\n`, true)
               .addRaw(`age_minutes: ${ageMinutes.toFixed(1)}\n`, true)
+              .addRaw(`recovery_minutes: ${recoveryMinutes}\n`, true)
               .addRaw(`threshold_minutes: ${staleMinutes}\n`, true)
+              .addRaw(`recovery_dispatch: ${recoveryDispatch}\n`, true)
+              .addRaw(`refresh_workflow: ${refreshWorkflow}\n`, true)
               .write();
