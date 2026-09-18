@@ -2,7 +2,8 @@ name: Refresh IGP Seismic Feed
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    # Avoid the top of the hour, when GitHub documents the highest schedule load.
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -15,6 +16,7 @@ permissions:
 jobs:
   refresh-feed:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -28,6 +30,7 @@ jobs:
           python-version: "3.12"
 
       - name: Run ingestor
+        id: ingest
         env:
           IGP_HISTORICAL_SOURCE_URL: ${{ vars.IGP_HISTORICAL_SOURCE_URL }}
           IGP_HISTORICAL_REFRESH_HOURS: ${{ vars.IGP_HISTORICAL_REFRESH_HOURS }}
@@ -39,14 +42,68 @@ jobs:
           IGP_REPORTES_REFRESH_HOURS: ${{ vars.IGP_REPORTES_REFRESH_HOURS }}
           IGP_PREVIEW_ROWS: ${{ vars.IGP_PREVIEW_ROWS }}
         run: |
-          if [ -n "${IGP_HISTORICAL_SOURCE_URL:-}" ]; then
-            python3 seismic_bi_stream/igp_seismic_stream.py \
-              --historical-source "${IGP_HISTORICAL_SOURCE_URL}"
-          else
-            python3 seismic_bi_stream/igp_seismic_stream.py
-          fi
+          set -o pipefail
+          started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "started_at=${started_at}" >> "$GITHUB_OUTPUT"
+
+          for attempt in 1 2 3; do
+            echo "::notice title=IGP ingest::Attempt ${attempt} of 3"
+            rm -f seismic_bi_stream/data/igp_seismic.db
+
+            if [ -n "${IGP_HISTORICAL_SOURCE_URL:-}" ]; then
+              command=(
+                python3 seismic_bi_stream/igp_seismic_stream.py
+                --historical-source "${IGP_HISTORICAL_SOURCE_URL}"
+              )
+            else
+              command=(python3 seismic_bi_stream/igp_seismic_stream.py)
+            fi
+
+            if "${command[@]}" 2>&1 | tee "igp-ingest-attempt-${attempt}.log"; then
+              echo "attempt=${attempt}" >> "$GITHUB_OUTPUT"
+              break
+            fi
+
+            if [ "${attempt}" -eq 3 ]; then
+              echo "::error title=IGP ingest failed::All 3 attempts failed"
+              exit 1
+            fi
+
+            delay=$((attempt * 30))
+            echo "::warning title=IGP ingest retry::Attempt ${attempt} failed; retrying in ${delay}s"
+            sleep "${delay}"
+          done
+
+      - name: Validate heartbeat
+        id: heartbeat
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          path = Path("seismic_bi_stream/data/state.json")
+          state = json.loads(path.read_text(encoding="utf-8"))
+          raw = state.get("last_run_utc")
+          if not raw:
+              raise SystemExit("state.json does not contain last_run_utc")
+
+          heartbeat = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+          age_seconds = (datetime.now(timezone.utc) - heartbeat).total_seconds()
+          if age_seconds < 0 or age_seconds > 300:
+              raise SystemExit(
+                  f"last_run_utc is outside the 5-minute validation window: {raw} "
+                  f"(age_seconds={age_seconds:.0f})"
+              )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"last_run_utc={raw}\n")
+              output.write(f"age_seconds={age_seconds:.0f}\n")
+          PY
 
       - name: Commit updated feed files
+        id: publish
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -59,8 +116,48 @@ jobs:
           git add docs/data/dashboard_meta.json
           if git diff --staged --quiet; then
             echo "No data changes to commit."
+            echo "result=no-change" >> "$GITHUB_OUTPUT"
           else
             git commit -m "chore: refresh IGP seismic feed"
-            git pull --rebase origin main
-            git push
+            for attempt in 1 2 3; do
+              if git pull --rebase origin main && git push origin HEAD:main; then
+                echo "result=pushed" >> "$GITHUB_OUTPUT"
+                echo "attempt=${attempt}" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+
+              git rebase --abort 2>/dev/null || true
+              if [ "${attempt}" -eq 3 ]; then
+                echo "::error title=Feed publish failed::Unable to rebase and push after 3 attempts"
+                exit 1
+              fi
+
+              delay=$((attempt * 15))
+              echo "::warning title=Feed publish retry::Attempt ${attempt} failed; retrying in ${delay}s"
+              sleep "${delay}"
+            done
           fi
+
+      - name: Publish run summary
+        if: always()
+        env:
+          INGEST_ATTEMPT: ${{ steps.ingest.outputs.attempt || 'failed' }}
+          STARTED_AT: ${{ steps.ingest.outputs.started_at || 'unknown' }}
+          LAST_RUN_UTC: ${{ steps.heartbeat.outputs.last_run_utc || 'unavailable' }}
+          HEARTBEAT_AGE_SECONDS: ${{ steps.heartbeat.outputs.age_seconds || 'unavailable' }}
+          PUBLISH_RESULT: ${{ steps.publish.outputs.result || 'failed' }}
+          PUBLISH_ATTEMPT: ${{ steps.publish.outputs.attempt || 'n/a' }}
+        run: |
+          {
+            echo "## IGP seismic refresh"
+            echo
+            echo "| Signal | Value |"
+            echo "| --- | --- |"
+            echo "| Workflow started (UTC) | \`${STARTED_AT}\` |"
+            echo "| Ingest attempt | \`${INGEST_ATTEMPT}\` |"
+            echo "| Heartbeat (UTC) | \`${LAST_RUN_UTC}\` |"
+            echo "| Heartbeat age (seconds) | \`${HEARTBEAT_AGE_SECONDS}\` |"
+            echo "| Publish result | \`${PUBLISH_RESULT}\` |"
+            echo "| Publish attempt | \`${PUBLISH_ATTEMPT}\` |"
+            echo "| Run | [${GITHUB_RUN_ID}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) |"
+          } >> "$GITHUB_STEP_SUMMARY"
