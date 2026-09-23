@@ -1,6 +1,6 @@
 {
-  "historical_last_refresh_et": "2026-09-22T20:27:16-04:00",
-  "historical_last_refresh_utc": "2026-09-23T00:27:16Z",
+  "historical_last_refresh_et": "2026-09-23T01:00:54-04:00",
+  "historical_last_refresh_utc": "2026-09-23T05:00:54Z",
   "historical_source": "https://www.datosabiertos.gob.pe/sites/default/files/Catalogo1960_2023.xlsx",
   "known_fields": {
     "code": "esriFieldTypeString",
@@ -23,11 +23,13 @@
     "shape": "esriFieldTypeGeometry",
     "ultimo": "esriFieldTypeString"
   },
-  "last_objectid": 2347,
-  "last_run_et": "2026-09-22T20:27:22-04:00",
-  "last_run_utc": "2026-09-23T00:27:22Z",
+  "last_objectid": 2348,
+  "last_run_et": "2026-09-23T01:01:03-04:00",
+  "last_run_utc": "2026-09-23T05:01:03Z",
   "reportes_base_url": "https://ultimosismo.igp.gob.pe/api/ultimo-sismo/ajaxb",
   "reportes_end_year": 2026,
+  "reportes_last_error": "<urlopen error [Errno 104] Connection reset by peer>",
+  "reportes_last_error_utc": "2026-09-23T05:00:59Z",
   "reportes_last_refresh_et": "2026-09-22T20:27:19-04:00",
   "reportes_last_refresh_utc": "2026-09-23T00:27:19Z",
   "reportes_start_year": 2020
